@@ -12,11 +12,8 @@ const int kMaxGeometry = 1000;
 const int kNoShapeFound = -1;
 const float kMaxDist = 99999.0f;
 
-
-__global__ void rayTrace(int resWidth, int resHeight, Geometry *geomList[], 
-      int geomCount, TKCamera cam, TKSphere *sphereTks, int numSpheres, 
-      uchar4 *output) {
-
+__global__ void initScene(Geometry *geomList[], TKSphere *sphereTks, int numSpheres) {
+   // This should really only be run with one thread and block anyways, but this is a safety check
    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
       for (int i = 0; i < numSpheres; i++) {
          TKSphere s = sphereTks[i];
@@ -25,7 +22,10 @@ __global__ void rayTrace(int resWidth, int resHeight, Geometry *geomList[],
          geomList[i] = new Sphere(s.p, s.r, m);
       }
    }
-   syncthreads();
+}
+
+__global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
+      Geometry *geomList[], int geomCount,  uchar4 *output) {
 
    int x = blockIdx.x * blockDim.x + threadIdx.x;
    int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -91,20 +91,22 @@ extern "C" void launch_kernel(TKSceneData *data, int width, int height, uchar4 *
   HANDLE_ERROR(cudaMalloc(&dOutput, sizeof(uchar4) * width * height));
 
   // Do the actual kernel
+  initScene<<<1, 1>>>(dGeomList, dSphereTokens, sphereCount);
+
   dim3 dimBlock(kBlockWidth, kBlockWidth);
   dim3 dimGrid((width - 1) / kBlockWidth + 1, (height - 1) / kBlockWidth + 1);
-  rayTrace<<<dimGrid, dimBlock>>>(width, height, dGeomList, geometryCount, *data->camera, dSphereTokens, 
-        sphereCount, dOutput);
+  rayTrace<<<dimGrid, dimBlock>>>(width, height, *data->camera, 
+        dGeomList, geometryCount, dOutput);
 
   cudaDeviceSynchronize();
   checkCUDAError("kernel failed");
 
-  if (dSphereTokens) HANDLE_ERROR(cudaFree(dSphereTokens));
+  //if (dSphereTokens) HANDLE_ERROR(cudaFree(dSphereTokens));
 
-  HANDLE_ERROR(cudaFree(dGeomList));
+  //HANDLE_ERROR(cudaFree(dGeomList));
   HANDLE_ERROR(cudaMemcpy(output, dOutput, 
            sizeof(uchar4) * width * height, cudaMemcpyDeviceToHost));
-  HANDLE_ERROR(cudaFree(dOutput));
+  //HANDLE_ERROR(cudaFree(dOutput));
 }
 
 

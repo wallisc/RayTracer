@@ -1,6 +1,6 @@
 CC=nvcc
 LD=nvcc
-CUDAFLAGS= -O3 -arch=sm_21 -Xptxas -dlcm=ca 
+CUDAFLAGS= -O2 -lineinfo -arch=sm_21 -Xptxas -dlcm=ca 
 
 all: raytrace.cpp POVRayParser.o kernel.o
 	$(CC) $(CUDAFLAGS) raytrace.cpp Image.cpp POVRayParser.o kernel.o -o raytrace 
