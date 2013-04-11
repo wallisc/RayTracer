@@ -38,15 +38,21 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
    
    // Generate rays
    float halfWidth = resWidth / 2.0;
-   float halfHeight= resHeight / 2.0;
-   vec3 rPos = vec3((halfWidth - x) / halfWidth, (halfHeight - y) / halfHeight, 0.0);
-   rPos += cam.pos;
+   float halfHeight = resHeight / 2.0;
 
-   //TODO remove this
-   rPos.x *= 5;
-   rPos.y *= 5;
+   //Image space coordinates 
+   float u = 2.0f * (x / (float)resWidth) - 1.0f; 
+   float v = 2.0f * (y / (float)resHeight) - 1.0f;
 
-   vec3 rDir = glm::normalize(cam.lookAt - cam.pos);
+   //TODO currently makes the assumption that cam.up is normalized
+   // .5f is because the magnitude of cam.right and cam.up should be equal
+   // to the width and height of the image plane in world space
+   vec3 rPos = u *.5f * cam.right + v * .5f * cam.up + cam.pos;
+
+   //TODO if the cam.lookAt - cam.pos was already normalized, could lead to 
+   // speedups
+   vec3 lookAtVec = glm::normalize(cam.lookAt - cam.pos);
+   vec3 rDir = glm::normalize(rPos - cam.pos + lookAtVec);
    Ray r(rPos, rDir);
 
    float t = kMaxDist;
