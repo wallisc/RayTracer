@@ -259,7 +259,17 @@ int POVRayParser::parsePlane(std::ifstream &in, TKSceneData *data) {
 #endif 
 
    status = parseModifiers(in, &p.mod, &matStack);
-   //TODO apply matrix stack
+
+   vec4 pNorm(p.n.x, p.n.y, p.n.z, 0.0f);
+   vec4 pCenter = pNorm * p.d; pCenter.w = 1.0f;
+   
+   pNorm = matStack * pNorm;
+   pCenter = matStack * pCenter;
+
+   p.n = vec3(pNorm.x, pNorm.y, pNorm.z);
+   p.d = glm::length(pCenter);
+   data->planes.push_back(p);
+
    return status;
 }
 

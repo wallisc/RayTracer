@@ -21,3 +21,8 @@ sphere { <0, 0, 0>, 2
   finish {ambient 0.2 diffuse 0.4}
 }
 
+sphere { <0, 0, 0>, 2
+  pigment { color rgb <1.0, 1.0, 0.0>}
+  finish {ambient 0.2 diffuse 0.4}
+  translate <3, 2, -10>
+}
