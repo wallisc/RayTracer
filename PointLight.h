@@ -3,7 +3,7 @@
 
 #include "Light.h"
 
-class PointLight : Light {
+class PointLight : public Light {
 public:
    __device__ PointLight(glm::vec3 position, glm::vec3 color) : p(position), c(color) {}
 

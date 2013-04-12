@@ -21,7 +21,7 @@ protected:
 
          float dist = geomList[i]->getIntersection(shadow);
 
-         if (isFloatLessThan(dist, 0.0f)) return true;
+         if (dist > 0.0f) return true;
       }
       return false;
    }

@@ -17,13 +17,21 @@ const float kMaxDist = FLT_MAX;
 using glm::vec3;
 
 __device__ uchar4 shadeObject(Geometry *geomList[], int geomCount, 
-                              Light *lights, int lightCount, int objIdx, 
-                              Ray ray) {
+                              Light *lights[], int lightCount, int objIdx, 
+                              vec3 intersectPoint) {
       uchar4 clr;
       Material m = geomList[objIdx]->getMaterial();
+      vec3 totalLight(0.0f);
 
-      clr.x = m.clr.x * 255.0; clr.y = m.clr.y * 255.0; 
-      clr.z = m.clr.z * 255.0; clr.w = 255;
+      for(int i = 0; i < lightCount; i++) {
+         vec3 light = lights[i]->getLightAtPoint(geomList, geomCount, objIdx, intersectPoint);
+         totalLight += light;
+      }
+
+      clr.x = clamp(m.clr.x * totalLight.x * 255.0, 0.0f, 255.0f); 
+      clr.y = clamp(m.clr.y * totalLight.y * 255.0, 0.0f, 255.0f); 
+      clr.z = clamp(m.clr.z * totalLight.z * 255.0, 0.0f, 255.0f); 
+      clr.w = 255;
       return clr;
 }
 
@@ -44,6 +52,12 @@ __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *spher
          TKFinish f = p.mod.fin;
          Material m(p.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
          geomList[geomIdx++] = new Plane(p.d, p.n, m);
+      }
+
+      for (int i = 0; i < numPointLights; i++) {
+         TKPointLight &p = pLightTks[i];
+         lights[i] = new PointLight(p.pos, p.clr);
+
       }
    }
 }
@@ -92,7 +106,7 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
 
    if (closestShapeIdx != kNoShapeFound) {
       clr = shadeObject(geomList, geomCount, lights, lightCount, 
-                        closestShapeIdx, r);
+                        closestShapeIdx, r.getPoint(t));
    } else {
       clr.x = 0; clr.y = 0; clr.z = 0; clr.w = 255;
    }
