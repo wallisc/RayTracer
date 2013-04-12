@@ -11,6 +11,8 @@ public:
    __device__ virtual glm::vec3 getLightAtPoint(Geometry *geomList[], int geomCount, 
          int objIdx, glm::vec3 point) = 0;
 
+   __device__ virtual glm::vec3 getLightDir(glm::vec3 point) = 0;
+
 protected:
    __device__ static bool isInShadow(Ray shadow, Geometry *geomList[], int geomCount, 
          int objIdx) {

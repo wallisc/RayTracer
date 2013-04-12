@@ -8,6 +8,7 @@
 #include "Plane.h"
 #include "glm/glm.hpp"
 #include "kernel.h"
+#include "Shader.h"
 #include "cudaError.h"
 
 const int kBlockWidth = 16;
@@ -18,14 +19,17 @@ using glm::vec3;
 
 __device__ uchar4 shadeObject(Geometry *geomList[], int geomCount, 
                               Light *lights[], int lightCount, int objIdx, 
-                              vec3 intersectPoint) {
+                              vec3 intersectPoint, Ray ray) {
       uchar4 clr;
       Material m = geomList[objIdx]->getMaterial();
       vec3 totalLight(0.0f);
 
       for(int i = 0; i < lightCount; i++) {
          vec3 light = lights[i]->getLightAtPoint(geomList, geomCount, objIdx, intersectPoint);
-         totalLight += light;
+         vec3 lightDir = lights[i]->getLightDir(intersectPoint);
+         vec3 normal = geomList[i]->getNormalAt(ray);
+         totalLight += Shader::shade(m.amb, m.dif, m.spec, m.rough, 
+               glm::normalize(-ray.d), lightDir, light, normal); 
       }
 
       clr.x = clamp(m.clr.x * totalLight.x * 255.0, 0.0f, 255.0f); 
@@ -106,7 +110,7 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
 
    if (closestShapeIdx != kNoShapeFound) {
       clr = shadeObject(geomList, geomCount, lights, lightCount, 
-                        closestShapeIdx, r.getPoint(t));
+                        closestShapeIdx, r.getPoint(t), r);
    } else {
       clr.x = 0; clr.y = 0; clr.z = 0; clr.w = 255;
    }

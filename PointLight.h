@@ -17,6 +17,10 @@ public:
       }
    }
 
+   __device__ virtual glm::vec3 getLightDir(glm::vec3 point) {
+      return glm::normalize(p - point);
+   }
+
 private:
    glm::vec3 p, c;
 };
