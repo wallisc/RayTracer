@@ -78,7 +78,9 @@ typedef struct TKTriangle {
 
 typedef struct TKSceneData {
    TKCamera *camera;
+
    std::vector<TKPointLight> pointLights;
+
    std::vector<TKBox> boxes;
    std::vector<TKSphere> spheres;
    std::vector<TKPlane> planes;

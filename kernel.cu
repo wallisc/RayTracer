@@ -2,20 +2,33 @@
 #include <float.h>
 
 #include "Geometry.h"
+#include "Light.h"
+#include "PointLight.h"
 #include "Sphere.h"
 #include "Plane.h"
 #include "glm/glm.hpp"
 #include "kernel.h"
 #include "cudaError.h"
 
-using glm::vec3;
 const int kBlockWidth = 16;
-const int kMaxGeometry = 1000;
 const int kNoShapeFound = -1;
 const float kMaxDist = FLT_MAX;
 
-__global__ void initScene(Geometry *geomList[], TKSphere *sphereTks, int numSpheres,
-      TKPlane *planeTks, int numPlanes) {
+using glm::vec3;
+
+__device__ uchar4 shadeObject(Geometry *geomList[], int geomCount, 
+                              Light *lights, int lightCount, int objIdx, 
+                              Ray ray) {
+      uchar4 clr;
+      Material m = geomList[objIdx]->getMaterial();
+
+      clr.x = m.clr.x * 255.0; clr.y = m.clr.y * 255.0; 
+      clr.z = m.clr.z * 255.0; clr.w = 255;
+      return clr;
+}
+
+__global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *sphereTks, int numSpheres,
+      TKPlane *planeTks, int numPlanes, TKPointLight *pLightTks, int numPointLights) {
    int geomIdx = 0;
    // This should really only be run with one thread and block anyways, but this is a safety check
    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
@@ -36,7 +49,8 @@ __global__ void initScene(Geometry *geomList[], TKSphere *sphereTks, int numSphe
 }
 
 __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
-      Geometry *geomList[], int geomCount,  uchar4 *output) {
+      Geometry *geomList[], int geomCount, Light *lights[], int lightCount,  
+      uchar4 *output) {
 
    int x = blockIdx.x * blockDim.x + threadIdx.x;
    int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -63,7 +77,7 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
    //TODO if the cam.lookAt - cam.pos was already normalized, could lead to 
    // speedups
    vec3 lookAtVec = glm::normalize(cam.lookAt - cam.pos);
-   vec3 rDir = glm::normalize(rPos - cam.pos + lookAtVec);
+   vec3 rDir = rPos - cam.pos + lookAtVec;
    Ray r(rPos, rDir);
 
    float t = kMaxDist;
@@ -77,9 +91,8 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
    }
 
    if (closestShapeIdx != kNoShapeFound) {
-      Material m = geomList[closestShapeIdx]->getMaterial();
-      clr.x = m.clr.x * 255.0; clr.y = m.clr.y * 255.0; 
-      clr.z = m.clr.z * 255.0; clr.w = 255;
+      clr = shadeObject(geomList, geomCount, lights, lightCount, 
+                        closestShapeIdx, r);
    } else {
       clr.x = 0; clr.y = 0; clr.z = 0; clr.w = 255;
    }
@@ -89,11 +102,15 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
 
 extern "C" void launch_kernel(TKSceneData *data, int width, int height, uchar4 *output) {
   Geometry **dGeomList; 
+  Light **dLightList;
+
   TKSphere *dSphereTokens = NULL;
   TKPlane *dPlaneTokens = NULL;
+  TKPointLight *dPointLightTokens = NULL;
   uchar4 *dOutput;
 
   int geometryCount = 0;
+  int lightCount = 0;
 
   // Cuda memory allocation
   int sphereCount = data->spheres.size();
@@ -112,17 +129,28 @@ extern "C" void launch_kernel(TKSceneData *data, int width, int height, uchar4 *
      geometryCount += planeCount;
   }
 
-  HANDLE_ERROR(cudaMalloc(&dGeomList, sizeof(Geometry *) * kMaxGeometry));
+  int pointLightCount = data->pointLights.size();
+  if (pointLightCount > 0) {
+      HANDLE_ERROR(cudaMalloc(&dPointLightTokens, 
+             sizeof(TKPointLight) * pointLightCount));
+      HANDLE_ERROR(cudaMemcpy(dPointLightTokens, &data->pointLights[0],
+            sizeof(TKPointLight) * pointLightCount, cudaMemcpyHostToDevice));
+      lightCount += pointLightCount;
+  }
+
+  HANDLE_ERROR(cudaMalloc(&dGeomList, sizeof(Geometry *) * geometryCount));
+  HANDLE_ERROR(cudaMalloc(&dLightList, sizeof(Light *) * lightCount));
 
   HANDLE_ERROR(cudaMalloc(&dOutput, sizeof(uchar4) * width * height));
 
   // Do the actual kernel
-  initScene<<<1, 1>>>(dGeomList, dSphereTokens, sphereCount, dPlaneTokens, planeCount);
+  initScene<<<1, 1>>>(dGeomList, dLightList, dSphereTokens, sphereCount, dPlaneTokens, 
+        planeCount, dPointLightTokens, pointLightCount);
 
   dim3 dimBlock(kBlockWidth, kBlockWidth);
   dim3 dimGrid((width - 1) / kBlockWidth + 1, (height - 1) / kBlockWidth + 1);
   rayTrace<<<dimGrid, dimBlock>>>(width, height, *data->camera, 
-        dGeomList, geometryCount, dOutput);
+        dGeomList, geometryCount, dLightList, lightCount, dOutput);
 
   cudaDeviceSynchronize();
   checkCUDAError("kernel failed");
