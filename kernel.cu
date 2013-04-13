@@ -42,26 +42,44 @@ __device__ uchar4 shadeObject(Geometry *geomList[], int geomCount,
 __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *sphereTks, int numSpheres,
       TKPlane *planeTks, int numPlanes, TKPointLight *pLightTks, int numPointLights) {
    int geomIdx = 0;
+   int lightIdx = 0;
+
    // This should really only be run with one thread and block anyways, but this is a safety check
    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
+
+      // Add all the geometry
       for (int i = 0; i < numSpheres; i++) {
-         TKSphere s = sphereTks[i];
-         TKFinish f = s.mod.fin;
+         const TKSphere &s = sphereTks[i];
+         const TKFinish f = s.mod.fin;
          Material m(s.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
          geomList[geomIdx++] = new Sphere(s.p, s.r, m);
       }
 
       for (int i = 0; i < numPlanes; i++) {
-         TKPlane p = planeTks[i];
-         TKFinish f = p.mod.fin;
+         const TKPlane &p = planeTks[i];
+         const TKFinish &f = p.mod.fin;
          Material m(p.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
          geomList[geomIdx++] = new Plane(p.d, p.n, m);
       }
 
+      // Add all the lights
       for (int i = 0; i < numPointLights; i++) {
          TKPointLight &p = pLightTks[i];
-         lights[i] = new PointLight(p.pos, p.clr);
+         lights[lightIdx++] = new PointLight(p.pos, p.clr);
 
+      }
+   }
+}
+
+__global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightList[], int lightCount) {
+   // This should really only be run with one thread and block anyways, but this is a safety check
+   if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
+      for (int i = 0; i < geomCount; i++) {
+         delete geomList[i];
+      }
+
+      for (int i = 0; i < lightCount; i++) {
+         delete lightList[i];
       }
    }
 }
@@ -80,9 +98,6 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
    uchar4 clr;
    
    // Generate rays
-   float halfWidth = resWidth / 2.0;
-   float halfHeight = resHeight / 2.0;
-
    //Image space coordinates 
    float u = 2.0f * (x / (float)resWidth) - 1.0f; 
    float v = 2.0f * (y / (float)resHeight) - 1.0f;
@@ -118,17 +133,14 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
    output[index] = clr;
 }
 
-extern "C" void launch_kernel(TKSceneData *data, int width, int height, uchar4 *output) {
-  Geometry **dGeomList; 
-  Light **dLightList;
+void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightList, 
+   int *retGeometryCount, int *retLightCount) {
+  int geometryCount = 0;
+  int lightCount = 0;
 
   TKSphere *dSphereTokens = NULL;
   TKPlane *dPlaneTokens = NULL;
   TKPointLight *dPointLightTokens = NULL;
-  uchar4 *dOutput;
-
-  int geometryCount = 0;
-  int lightCount = 0;
 
   // Cuda memory allocation
   int sphereCount = data->spheres.size();
@@ -156,14 +168,41 @@ extern "C" void launch_kernel(TKSceneData *data, int width, int height, uchar4 *
       lightCount += pointLightCount;
   }
 
-  HANDLE_ERROR(cudaMalloc(&dGeomList, sizeof(Geometry *) * geometryCount));
-  HANDLE_ERROR(cudaMalloc(&dLightList, sizeof(Light *) * lightCount));
+  HANDLE_ERROR(cudaMalloc(dGeomList, sizeof(Geometry *) * geometryCount));
+  HANDLE_ERROR(cudaMalloc(dLightList, sizeof(Light *) * lightCount));
 
+  // Fill up GeomList and LightList with actual objects on the GPU
+  initScene<<<1, 1>>>(*dGeomList, *dLightList, dSphereTokens, sphereCount, dPlaneTokens, 
+        planeCount, dPointLightTokens, pointLightCount);
+
+  if (dSphereTokens) HANDLE_ERROR(cudaFree(dSphereTokens));
+  if (dPlaneTokens) HANDLE_ERROR(cudaFree(dPlaneTokens));
+
+  *retGeometryCount = geometryCount;
+  *retLightCount = lightCount;
+}
+
+void freeGPUScene(Geometry **dGeomList, int geomCount, Light **dLightList, 
+      int lightCount) {
+   deleteScene<<<1, 1>>>(dGeomList, geomCount, dLightList, lightCount);
+
+  HANDLE_ERROR(cudaFree(dGeomList));
+  HANDLE_ERROR(cudaFree(dLightList));
+}
+
+extern "C" void launch_kernel(TKSceneData *data, int width, int height, uchar4 *output) {
+  Geometry **dGeomList; 
+  Light **dLightList;
+
+  uchar4 *dOutput;
+
+  int geometryCount;
+  int lightCount;
+
+
+  allocateGPUScene(data, &dGeomList, &dLightList, &geometryCount, &lightCount);
   HANDLE_ERROR(cudaMalloc(&dOutput, sizeof(uchar4) * width * height));
 
-  // Do the actual kernel
-  initScene<<<1, 1>>>(dGeomList, dLightList, dSphereTokens, sphereCount, dPlaneTokens, 
-        planeCount, dPointLightTokens, pointLightCount);
 
   dim3 dimBlock(kBlockWidth, kBlockWidth);
   dim3 dimGrid((width - 1) / kBlockWidth + 1, (height - 1) / kBlockWidth + 1);
@@ -173,13 +212,10 @@ extern "C" void launch_kernel(TKSceneData *data, int width, int height, uchar4 *
   cudaDeviceSynchronize();
   checkCUDAError("kernel failed");
 
-  if (dSphereTokens) HANDLE_ERROR(cudaFree(dSphereTokens));
-  if (dPlaneTokens) HANDLE_ERROR(cudaFree(dPlaneTokens));
-
-  //HANDLE_ERROR(cudaFree(dGeomList));
+  freeGPUScene(dGeomList, geometryCount, dLightList, lightCount);
   HANDLE_ERROR(cudaMemcpy(output, dOutput, 
            sizeof(uchar4) * width * height, cudaMemcpyDeviceToHost));
-  //HANDLE_ERROR(cudaFree(dOutput));
+  HANDLE_ERROR(cudaFree(dOutput));
 }
 
 
