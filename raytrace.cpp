@@ -8,7 +8,7 @@
 #include "Image.h"
 
 const int kDefaultImageWidth = 1024;
-const int kDefaultImageHeight = 1024;
+const int kDefaultImageHeight = 768;
 
 void printInputError(); 
 int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, char **fileName);

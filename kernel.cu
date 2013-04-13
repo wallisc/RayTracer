@@ -27,7 +27,7 @@ __device__ uchar4 shadeObject(Geometry *geomList[], int geomCount,
       for(int i = 0; i < lightCount; i++) {
          vec3 light = lights[i]->getLightAtPoint(geomList, geomCount, objIdx, intersectPoint);
          vec3 lightDir = lights[i]->getLightDir(intersectPoint);
-         vec3 normal = geomList[i]->getNormalAt(ray);
+         vec3 normal = geomList[objIdx]->getNormalAt(ray);
          totalLight += Shader::shade(m.amb, m.dif, m.spec, m.rough, 
                glm::normalize(-ray.d), lightDir, light, normal); 
       }
