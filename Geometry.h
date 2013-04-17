@@ -8,11 +8,11 @@
 
 class Geometry {
 public:
-   __device__ Geometry(Material material) : mat(material) {}
-   __device__ virtual float getIntersection(Ray r) = 0;
-   __device__ Material getMaterial() { return mat; };
+   __device__ Geometry(const Material &material) : mat(material) {}
+   __device__ virtual float getIntersection(const Ray &r) const = 0;
+   __device__ Material getMaterial() const { return mat; };
    //TODO make this function more efficient (take in a param t also?)
-   __device__ virtual glm::vec3 getNormalAt(Ray r) = 0;
+   __device__ virtual glm::vec3 getNormalAt(const Ray &r, float param) const = 0;
    
 private:
    Material mat;

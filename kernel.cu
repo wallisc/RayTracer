@@ -33,15 +33,16 @@ __device__ bool isInShadow(Ray shadow, Geometry *geomList[], int geomCount,
 
 __device__ uchar4 shadeObject(Geometry *geomList[], int geomCount, 
                               Light *lights[], int lightCount, int objIdx, 
-                              vec3 intersectPoint, Ray ray) {
+                              float intParam, Ray ray) {
       uchar4 clr;
+      glm::vec3 intersectPoint = ray.getPoint(intParam);
       Material m = geomList[objIdx]->getMaterial();
       vec3 totalLight(0.0f);
 
       for(int i = 0; i < lightCount; i++) {
          vec3 light = lights[i]->getLightAtPoint(geomList, geomCount, objIdx, intersectPoint);
          vec3 lightDir = lights[i]->getLightDir(intersectPoint);
-         vec3 normal = geomList[objIdx]->getNormalAt(ray);
+         vec3 normal = geomList[objIdx]->getNormalAt(ray, intParam);
          Ray shadow = lights[i]->getShadow(intersectPoint);
          totalLight += Shader::shade(m.amb, m.dif, m.spec, m.rough, 
                glm::normalize(-ray.d), lightDir, light, normal,
@@ -141,7 +142,7 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
 
    if (closestShapeIdx != kNoShapeFound) {
       clr = shadeObject(geomList, geomCount, lights, lightCount, 
-                        closestShapeIdx, r.getPoint(t), r);
+                        closestShapeIdx, t, r);
    } else {
       clr.x = 0; clr.y = 0; clr.z = 0; clr.w = 255;
    }

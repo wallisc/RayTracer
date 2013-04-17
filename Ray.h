@@ -4,7 +4,7 @@
 
 typedef struct Ray {
    __device__ Ray(const glm::vec3 &origin, const glm::vec3 &direction) :o(origin), d(direction) {}
-   __device__ glm::vec3 getPoint(float param) { return o + d * param; }
+   __device__ glm::vec3 getPoint(float param) const { return o + d * param; }
 
    glm::vec3 o, d;
 } Ray;

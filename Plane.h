@@ -8,10 +8,11 @@
 
 class Plane : public Geometry {
 public:
-   __device__ Plane(float distance, glm::vec3 normal, Material mat) :
+   __device__ Plane(float distance, const glm::vec3 &normal, 
+         const Material &mat) :
       Geometry(mat), n(normal), d(distance) {}
 
-   __device__ virtual float getIntersection(Ray r) {
+   __device__ virtual float getIntersection(const Ray &r) const {
       glm::vec3 c = -n * d;
       float numer = glm::dot(-n,r.o - c);
       float denom = glm::dot(n, r.d);
@@ -25,7 +26,7 @@ public:
    }
 
    // Precondition: The given position is on the sphere
-   __device__ virtual glm::vec3 getNormalAt(Ray ray) {
+   __device__ virtual glm::vec3 getNormalAt(const Ray &ray, float param) const {
       return n;
    }
 

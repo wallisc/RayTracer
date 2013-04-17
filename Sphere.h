@@ -7,10 +7,10 @@
 
 class Sphere : public Geometry {
 public:
-   __device__ Sphere(glm::vec3 center, float radius, Material mat) :
+   __device__ Sphere(const glm::vec3 &center, float radius, const Material &mat) :
       Geometry(mat), c(center), r(radius) {}
 
-   __device__ virtual float getIntersection(Ray ray) {
+   __device__ virtual float getIntersection(const Ray &ray) const {
 
       glm::vec3 eMinusC = ray.o - c;
 
@@ -26,8 +26,8 @@ public:
    }
 
    // Precondition: The given position is on the sphere
-   __device__ virtual glm::vec3 getNormalAt(Ray ray) {
-      glm::vec3 pos = ray.getPoint(getIntersection(ray));
+   __device__ virtual glm::vec3 getNormalAt(const Ray &ray, float param) const {
+      glm::vec3 pos = ray.getPoint(param);
       return (pos - c) / r;
 
    }
