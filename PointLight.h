@@ -8,17 +8,16 @@ public:
    __device__ PointLight(glm::vec3 position, glm::vec3 color) : p(position), c(color) {}
 
    __device__ virtual glm::vec3 getLightAtPoint(Geometry *geomList[], int geomCount, 
-         int objIdx, glm::vec3 point) {
-      Ray shadow(point, p - point);
-      if (!isInShadow(shadow, geomList, geomCount, objIdx)) {
-         return c; 
-      } else { 
-         return glm::vec3(0.0f);
-      }
+         int objIdx, glm::vec3 point) const {
+      return c;
    }
 
-   __device__ virtual glm::vec3 getLightDir(glm::vec3 point) {
+   __device__ virtual glm::vec3 getLightDir(glm::vec3 point) const {
       return glm::normalize(p - point);
+   }
+
+   __device__ virtual Ray getShadow(glm::vec3 point) const {
+      return Ray(point, p - point);
    }
 
 private:

@@ -17,6 +17,20 @@ const float kMaxDist = FLT_MAX;
 
 using glm::vec3;
 
+__device__ bool isInShadow(Ray shadow, Geometry *geomList[], int geomCount, 
+      int objIdx) {
+   float t = FLT_MAX;
+
+   for (int i = 0; i < geomCount; i++) {
+      if (i == objIdx) continue;
+
+      float dist = geomList[i]->getIntersection(shadow);
+
+      if (dist > 0.0f) return true;
+   }
+   return false;
+}
+
 __device__ uchar4 shadeObject(Geometry *geomList[], int geomCount, 
                               Light *lights[], int lightCount, int objIdx, 
                               vec3 intersectPoint, Ray ray) {
@@ -28,8 +42,10 @@ __device__ uchar4 shadeObject(Geometry *geomList[], int geomCount,
          vec3 light = lights[i]->getLightAtPoint(geomList, geomCount, objIdx, intersectPoint);
          vec3 lightDir = lights[i]->getLightDir(intersectPoint);
          vec3 normal = geomList[objIdx]->getNormalAt(ray);
+         Ray shadow = lights[i]->getShadow(intersectPoint);
          totalLight += Shader::shade(m.amb, m.dif, m.spec, m.rough, 
-               glm::normalize(-ray.d), lightDir, light, normal); 
+               glm::normalize(-ray.d), lightDir, light, normal,
+               isInShadow(shadow, geomList, geomCount, objIdx)); 
       }
 
       clr.x = clamp(m.clr.x * totalLight.x * 255.0, 0.0f, 255.0f); 

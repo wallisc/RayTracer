@@ -67,7 +67,11 @@ int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, char **file
 
    for (int i = 1; i < argc; i++) {
       if (argv[i][0] == '-' && argv[i][1] == 'I') {
-         *fileName = argv[i] + 2;
+         if (strlen(argv[i]) ==  2) {
+            *fileName = argv[++i];
+         } else {
+            *fileName = argv[i] + 2;
+         }
       } else {
          if (!imageWidthParsed) {
             *imgWidth= atoi(argv[i]);
