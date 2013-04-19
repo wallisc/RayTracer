@@ -8,8 +8,8 @@
 
 class Geometry {
 public:
-   __device__ Geometry(const Material &material, 
-         const glm::mat4 &inverseTransform) : mat(material), 
+   __device__ Geometry(const Material &material, const glm::mat4 &transform,
+         const glm::mat4 &inverseTransform) : mat(material), trans(transform),
          invTrans(inverseTransform) {}
 
    __device__ float getIntersection(const Ray &r) {
@@ -24,5 +24,6 @@ private:
 
    Material mat;
    glm::mat4 invTrans;
+   glm::mat4 trans;
 };
 #endif //GEOMETRY_H

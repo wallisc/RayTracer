@@ -317,6 +317,7 @@ int POVRayParser::parseModifiers(std::ifstream &in, TKModifier *m) {
       in >> nextWord;
    }
    
+   m->trans = glm::transpose(matStack);
    m->invTrans = glm::inverseTranspose(matStack);
 
    return kSuccess;
@@ -422,7 +423,7 @@ int POVRayParser::parseScale(std::ifstream &in, glm::mat4 *matStack) {
    
    if (status != kSuccess) return status;
 
-   *matStack = glm::scale(*matStack, s);
+   *matStack = glm::scale(mat4(1.0f), s) * (*matStack);
 
 #ifdef DEBUG
    printf("scale: %f, %f, %f\n", s.x, s.y, s.z);
@@ -442,9 +443,9 @@ int POVRayParser::parseRotate(std::ifstream &in, glm::mat4 *matStack) {
    if (status != kSuccess) return status;
 
    // Euler rotations
-   *matStack = glm::rotate(*matStack, r.x, kXAxis);
-   *matStack = glm::rotate(*matStack, r.y, kYAxis);
-   *matStack = glm::rotate(*matStack, r.z, kZAxis);
+   *matStack = glm::rotate(glm::mat4(1.0f), r.x, kXAxis) * (*matStack);
+   *matStack = glm::rotate(glm::mat4(1.0f), r.y, kYAxis) * (*matStack);
+   *matStack = glm::rotate(glm::mat4(1.0f), r.z, kZAxis) * (*matStack);
 
 #ifdef DEBUG
    printf("rotate: %f, %f, %f\n", r.x, r.y, r.z);
@@ -459,7 +460,7 @@ int POVRayParser::parseTranslate(std::ifstream &in, glm::mat4 *matStack) {
    
    if (status != kSuccess) return status;
 
-   *matStack = glm::translate(*matStack, t);
+   *matStack = glm::translate(mat4(1.0f), t) * (*matStack);
 
 #ifdef DEBUG
    printf("translate: %f, %f, %f\n", t.x, t.y, t.z);

@@ -4,15 +4,15 @@
 
 class CookTorranceShader : public Shader {
 public:
-   __device__ virtual glm::vec3 shade(float amb, float dif, float spec, float roughness,
-         glm::vec3 eyeVec, glm::vec3 lightDir, glm::vec3 lightColor, 
-         glm::vec3 normal, bool inShadow) {
+   __device__ virtual glm::vec3 shade(glm::vec3 matColor, float amb, float dif, 
+         float spec, float roughness, glm::vec3 eyeVec, glm::vec3 lightDir, 
+         glm::vec3 lightColor, glm::vec3 normal, bool inShadow) {
 
       glm::vec3 light(0.0f);
       
       // Ambient lighting
       light += amb * lightColor;
-      if (inShadow) return light;
+      if (inShadow) return light * matColor;
 
       // Diffuse lighting
       light += dif * clamp(glm::dot(normal, lightDir), 0.0f, 1.0f) * lightColor;
@@ -39,7 +39,7 @@ public:
          / (4.0f * glm::dot(eyeVec, normal) * glm::dot(normal, lightDir));
       light += spec * kSpec * lightColor;
       
-      return light; 
+      return light * matColor; 
    }
 };
 

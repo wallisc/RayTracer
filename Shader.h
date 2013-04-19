@@ -7,7 +7,7 @@
 
 class Shader {
 public:
-   __device__ virtual glm::vec3 shade(float amb, float dif, float spec, float roughness,
+   __device__ virtual glm::vec3 shade(glm::vec3 matColor, float amb, float dif, float spec, float roughness,
          glm::vec3 eyeVec, glm::vec3 lightDir, glm::vec3 lightColor, 
          glm::vec3 normal, bool inShadow) = 0;
 };

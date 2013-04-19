@@ -9,12 +9,16 @@
 class Plane : public Geometry {
 public:
    __device__ Plane(float distance, const glm::vec3 &normal, 
-         const Material &mat, const glm::mat4 &invTrans) :
-      Geometry(mat, invTrans), n(normal), d(distance) {}
+         const Material &mat, const glm::mat4 trans,
+         const glm::mat4 &invTrans) :
+      Geometry(mat, trans, invTrans), n(normal), d(distance) {
+         glm::vec4 wn = glm::vec4(n.x, n.y, n.z, 1.0f) * trans;
+         worldSpaceN = glm::vec3(wn.x, wn.y, wn.z);
+      }
 
    // Precondition: The given position is on the sphere
    __device__ virtual glm::vec3 getNormalAt(const Ray &ray, float param) const {
-      return n;
+      return worldSpaceN;
    }
 
 private:
@@ -31,9 +35,9 @@ private:
          return t;   
    }
 
+   glm::vec3 worldSpaceN;
    glm::vec3 n;
    float d;
-
 };
 
 #endif //SPHERE_H

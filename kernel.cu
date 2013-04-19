@@ -33,30 +33,69 @@ __device__ bool isInShadow(Ray shadow, Geometry *geomList[], int geomCount,
    return false;
 }
 
-__device__ uchar4 shadeObject(Geometry *geomList[], int geomCount, 
+// Find the closest shape. The index of the intersecting object is stored in
+// retOjIdx and the t-value along the input ray is stored in retParam
+//
+// If no intersection is found, retObjIdx is set to 'kNoShapeFound'
+__device__ void getClosestIntersection(Ray ray, Geometry *geomList[], 
+                                       int geomCount, int *retObjIdx, 
+                                       float *retParam) {
+   float t = kMaxDist;
+   int closestShapeIdx = kNoShapeFound;
+   for (int i = 0; i < geomCount; i++) {
+      float dist = geomList[i]->getIntersection(ray);
+      if (dist > 0.0f && dist < t) {
+         closestShapeIdx = i;
+         t = dist;
+      }
+   }
+
+   *retObjIdx = closestShapeIdx;
+   *retParam = t;
+}
+
+//Note: The ray parameter must stay as a copy (not an instance) 
+__device__ vec3 shadeObject(Geometry *geomList[], int geomCount, 
                               Light *lights[], int lightCount, int objIdx, 
                               float intParam, Ray ray, Shader **shader) {
-      uchar4 clr;
       glm::vec3 intersectPoint = ray.getPoint(intParam);
       Material m = geomList[objIdx]->getMaterial();
       vec3 totalLight(0.0f);
 
-      for(int i = 0; i < lightCount; i++) {
-         vec3 light = lights[i]->getLightAtPoint(geomList, geomCount, objIdx, intersectPoint);
-         vec3 lightDir = lights[i]->getLightDir(intersectPoint);
-         vec3 normal = geomList[objIdx]->getNormalAt(ray, intParam);
-         Ray shadow = lights[i]->getShadow(intersectPoint);
-         bool inShadow = isInShadow(shadow, geomList, geomCount, objIdx);
+      vec3 light, lightDir, normal, eyeVec;
+      float lastRefl = 1.0f;
 
-         totalLight += (*shader)->shade(m.amb, m.dif, m.spec, m.rough, 
-               glm::normalize(-ray.d), lightDir, light, normal, inShadow); 
+
+      for (int bounce = 0; bounce < kMaxRecurseCount; bounce++) {
+         if (bounce > 0) {
+            if (m.refl <= 0.0) break;
+            lastRefl = m.refl;
+         
+            vec3 reflect = 2.0f * glm::dot(normal, lightDir) * normal - eyeVec;
+            ray = Ray(intersectPoint, reflect);
+
+            getClosestIntersection(ray, geomList, geomCount, &objIdx, &intParam);
+            if (objIdx == kNoShapeFound) break;
+            m = geomList[objIdx]->getMaterial();
+            intersectPoint = ray.getPoint(intParam);
+         }
+
+         for(int lightIdx = 0; lightIdx < lightCount; lightIdx++) {
+            light = lights[lightIdx]->getLightAtPoint(geomList, geomCount, objIdx, intersectPoint);
+            lightDir = lights[lightIdx]->getLightDir(intersectPoint);
+            normal = geomList[objIdx]->getNormalAt(ray, intParam);
+            eyeVec = glm::normalize(-ray.d);
+
+            Ray shadow = lights[lightIdx]->getShadow(intersectPoint);
+            bool inShadow = isInShadow(shadow, geomList, geomCount, objIdx);
+
+            totalLight += lastRefl * (*shader)->shade(m.clr, m.amb, m.dif, m.spec, m.rough, 
+                  eyeVec, lightDir, light, normal, inShadow); 
+
+         }
       }
 
-      clr.x = clamp(m.clr.x * totalLight.x * 255.0, 0.0f, 255.0f); 
-      clr.y = clamp(m.clr.y * totalLight.y * 255.0, 0.0f, 255.0f); 
-      clr.z = clamp(m.clr.z * totalLight.z * 255.0, 0.0f, 255.0f); 
-      clr.w = 255;
-      return clr;
+      return totalLight;
 }
 
 __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *sphereTks, int numSpheres,
@@ -86,14 +125,14 @@ __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *spher
          const TKSphere &s = sphereTks[i];
          const TKFinish f = s.mod.fin;
          Material m(s.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
-         geomList[geomIdx++] = new Sphere(s.p, s.r, m, s.mod.invTrans);
+         geomList[geomIdx++] = new Sphere(s.p, s.r, m, s.mod.trans, s.mod.invTrans);
       }
 
       for (int i = 0; i < numPlanes; i++) {
          const TKPlane &p = planeTks[i];
          const TKFinish &f = p.mod.fin;
          Material m(p.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
-         geomList[geomIdx++] = new Plane(p.d, p.n, m, p.mod.invTrans);
+         geomList[geomIdx++] = new Plane(p.d, p.n, m, p.mod.trans, p.mod.invTrans);
       }
 
       // Add all the lights
@@ -117,6 +156,7 @@ __global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightLis
    }
 }
 
+
 __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
       Geometry *geomList[], int geomCount, Light *lights[], int lightCount,  
       uchar4 *output, Shader **shader) {
@@ -135,7 +175,6 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
    float u = 2.0f * (x / (float)resWidth) - 1.0f; 
    float v = 2.0f * (y / (float)resHeight) - 1.0f;
 
-   //TODO currently makes the assumption that cam.up is normalized
    // .5f is because the magnitude of cam.right and cam.up should be equal
    // to the width and height of the image plane in world space
    vec3 rPos = u *.5f * cam.right + v * .5f * cam.up + cam.pos;
@@ -146,19 +185,18 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
    vec3 rDir = rPos - cam.pos + lookAtVec;
    Ray r(rPos, rDir);
 
-   float t = kMaxDist;
-   int closestShapeIdx = kNoShapeFound;
-   for (int i = 0; i < geomCount; i++) {
-      float dist = geomList[i]->getIntersection(r);
-      if (dist > 0.0f && dist < t) {
-         closestShapeIdx = i;
-         t = dist;
-      }
-   }
+   float t;
+   int closestShapeIdx;
+   getClosestIntersection(r, geomList, geomCount, &closestShapeIdx, &t);
 
    if (closestShapeIdx != kNoShapeFound) {
-      clr = shadeObject(geomList, geomCount, lights, lightCount, 
+      vec3 totalColor = shadeObject(geomList, geomCount, lights, lightCount, 
                         closestShapeIdx, t, r, shader);
+
+      clr.x = clamp(totalColor.x * 255.0, 0.0f, 255.0f); 
+      clr.y = clamp(totalColor.y * 255.0, 0.0f, 255.0f); 
+      clr.z = clamp(totalColor.z * 255.0, 0.0f, 255.0f); 
+      clr.w = 255;
    } else {
       clr.x = 0; clr.y = 0; clr.z = 0; clr.w = 255;
    }
