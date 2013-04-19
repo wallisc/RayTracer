@@ -11,14 +11,17 @@ const int kDefaultImageWidth = 1024;
 const int kDefaultImageHeight = 768;
 
 void printInputError(); 
-int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, char **fileName);
+int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, 
+              char **fileName, char **outFile, ShadingType *stype);
 
 int main(int argc, char *argv[]) {
    int imgHeight = kDefaultImageHeight;
    int imgWidth = kDefaultImageWidth;
    char *fileName = NULL;
+   char *outFile = "sample.tga";
+   ShadingType stype = PHONG;
 
-   if (parseArgs(argc, argv, &imgWidth, &imgHeight, &fileName))
+   if (parseArgs(argc, argv, &imgWidth, &imgHeight, &fileName, &outFile, &stype))
       return EXIT_FAILURE;
 
 
@@ -31,7 +34,7 @@ int main(int argc, char *argv[]) {
 
    // Do the actual ray tracing
    uchar4 *output = (uchar4 *)malloc(imgWidth * imgHeight * sizeof(uchar4));
-   launch_kernel(&data, imgWidth, imgHeight, output);
+   launch_kernel(&data, stype, imgWidth, imgHeight, output);
 
    Image img(imgWidth, imgHeight);
    for (int x = 0; x < imgWidth; x++) {
@@ -43,10 +46,13 @@ int main(int argc, char *argv[]) {
          img.pixel(x, y, clr);
       }
    }
-   img.WriteTga("sample.tga");
+
+   img.WriteTga(outFile);
 }
 
-int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, char **fileName) {
+int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, 
+              char **fileName, char **outFile, ShadingType *stype) {
+
    bool imageWidthParsed = false;
    bool imageHeightParsed = false;
 
@@ -66,12 +72,22 @@ int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, char **file
    }
 
    for (int i = 1; i < argc; i++) {
-      if (argv[i][0] == '-' && argv[i][1] == 'I') {
+      if (argv[i][0] == '-' && argv[i][1] == 'O') {
+         if (strlen(argv[i]) ==  2) {
+            *outFile = argv[++i];
+         } else {
+            *outFile = argv[i] + 2;
+         }
+      } else if (argv[i][0] == '-' && argv[i][1] == 'I') {
          if (strlen(argv[i]) ==  2) {
             *fileName = argv[++i];
          } else {
             *fileName = argv[i] + 2;
          }
+      } else if (argv[i][0] == '-' && argv[i][1] == 'p') {
+        *stype = PHONG; 
+      } else if (argv[i][0] == '-' && argv[i][1] == 't') {
+        *stype = COOK_TORRANCE; 
       } else {
          if (!imageWidthParsed) {
             *imgWidth= atoi(argv[i]);

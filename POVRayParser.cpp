@@ -2,6 +2,7 @@
 #include <sstream>
 #include <stdio.h>
 #include "glm/glm.hpp"
+#include "glm/gtc/matrix_inverse.hpp"
 #include "glm/gtc/matrix_transform.hpp"
 
 using namespace std;
@@ -126,7 +127,6 @@ int POVRayParser::parseCamera(std::ifstream &in, TKSceneData *data) {
 int POVRayParser::parseBox(std::ifstream &in, TKSceneData *data) {
    int status;
    TKBox b;
-   mat4 matStack(1.0f);
 
    string nextWord;
    
@@ -151,7 +151,7 @@ int POVRayParser::parseBox(std::ifstream &in, TKSceneData *data) {
          b.p1.x, b.p1.y, b.p1.z, b.p2.x, b.p2.y, b.p2.z);
 #endif 
 
-   status = parseModifiers(in, &b.mod, &matStack);
+   status = parseModifiers(in, &b.mod);
    //TODO apply matrix stack
    return status;
 }
@@ -159,7 +159,6 @@ int POVRayParser::parseBox(std::ifstream &in, TKSceneData *data) {
 int POVRayParser::parseSphere(std::ifstream &in, TKSceneData *data) {
    int status;
    TKSphere s;
-   mat4 matStack(1.0f);
 
    string nextWord;
    
@@ -183,10 +182,7 @@ int POVRayParser::parseSphere(std::ifstream &in, TKSceneData *data) {
          s.p.x, s.p.y, s.p.z, s.r);
 #endif 
 
-   status = parseModifiers(in, &s.mod, &matStack);
-   vec4 newP = vec4(s.p.x, s.p.y, s.p.z, 1.0);
-   newP = matStack * newP;
-   s.p = vec3(newP.x, newP.y, newP.z);
+   status = parseModifiers(in, &s.mod);
 
    data->spheres.push_back(s);
    return status;
@@ -195,7 +191,6 @@ int POVRayParser::parseSphere(std::ifstream &in, TKSceneData *data) {
 int POVRayParser::parseCone(std::ifstream &in, TKSceneData *data) {
    int status;
    TKCone c;
-   mat4 matStack(1.0f);
 
    string nextWord;
 
@@ -228,15 +223,13 @@ int POVRayParser::parseCone(std::ifstream &in, TKSceneData *data) {
          c.r1, c.r2);
 #endif 
 
-   status = parseModifiers(in, &c.mod, &matStack);
-   //TODO apply matrix stack
+   status = parseModifiers(in, &c.mod);
    return status;
 }
 
 int POVRayParser::parsePlane(std::ifstream &in, TKSceneData *data) {
    int status;
    TKPlane p;
-   mat4 matStack(1.0f);
    string nextWord;
 
    status = parseCharacter(in, '{');
@@ -258,16 +251,8 @@ int POVRayParser::parsePlane(std::ifstream &in, TKSceneData *data) {
          p.n.x, p.n.y, p.n.z, p.d);
 #endif 
 
-   status = parseModifiers(in, &p.mod, &matStack);
+   status = parseModifiers(in, &p.mod);
 
-   vec4 pNorm(p.n.x, p.n.y, p.n.z, 0.0f);
-   vec4 pCenter = pNorm * p.d; pCenter.w = 1.0f;
-   
-   pNorm = matStack * pNorm;
-   pCenter = matStack * pCenter;
-
-   p.n = vec3(pNorm.x, pNorm.y, pNorm.z);
-   p.d = glm::length(pCenter);
    data->planes.push_back(p);
 
    return status;
@@ -276,7 +261,6 @@ int POVRayParser::parsePlane(std::ifstream &in, TKSceneData *data) {
 int POVRayParser::parseTriangle(std::ifstream &in, TKSceneData *data) {
    int status;
    TKTriangle t;
-   mat4 matStack(1.0f);
    string nextWord;
 
    status = parseCharacter(in, '{');   
@@ -302,23 +286,23 @@ int POVRayParser::parseTriangle(std::ifstream &in, TKSceneData *data) {
          t.p1.x, t.p1.y, t.p1.z, t.p2.x, t.p2.y, t.p2.z, t.p3.x, t.p3.y, t.p3.z);
 #endif 
 
-   status = parseModifiers(in, &t.mod, &matStack);
-   //TODO apply matrix stack
+   status = parseModifiers(in, &t.mod);
    return status;
 }
 
-int POVRayParser::parseModifiers(std::ifstream &in, TKModifier *m, glm::mat4 *matStack) {
+int POVRayParser::parseModifiers(std::ifstream &in, TKModifier *m) {
    string nextWord;
    in >> nextWord;
    int status;
+   glm::mat4 matStack(1.0f);
     
       while (nextWord.compare("}")) {
          if (!nextWord.compare("scale")) {
-            status = parseScale(in, matStack);
+            status = parseScale(in, &matStack);
          } else if (!nextWord.compare("rotate")) {
-            status = parseRotate(in, matStack);
+            status = parseRotate(in, &matStack);
          } else if (!nextWord.compare("translate")) {
-            status = parseTranslate(in, matStack);
+            status = parseTranslate(in, &matStack);
          } else if (!nextWord.compare("finish")) {
             status = parseFinish(in, &m->fin);
          } else if (!nextWord.compare("pigment")) {
@@ -332,6 +316,8 @@ int POVRayParser::parseModifiers(std::ifstream &in, TKModifier *m, glm::mat4 *ma
 
       in >> nextWord;
    }
+   
+   m->invTrans = glm::inverseTranspose(matStack);
 
    return kSuccess;
 }
@@ -531,20 +517,24 @@ int POVRayParser::parseCharacter(std::ifstream &in, char c) {
 //TODO May not be safe if an error is caused with ifstream
 bool POVRayParser::isComment(std::ifstream &in) {
    char c1, c2;
+   string nextWord;
+   bool isComment = false;
     
-   if (in.eof())
-      return false;
-   c1 = in.get();
+   if (in.eof()) return false;
 
-   if (in.eof()) {
-      in.putback(c1);
-      return false;
+   in >> nextWord;
+
+   if (nextWord.length() >= 2) {
+      isComment = nextWord[0] == '/' && nextWord[1] == '/';
    }
-   c2 = in.get();
 
-   in.putback(c2); 
-   in.putback(c1);
-   return c1 == '/' && c2 == '/';
+   // Put everything but the first character back into the istream
+   for (int i = nextWord.length(); i > 0; i--) {
+      in.unget();
+      if (isspace(in.peek())) i++;
+   }
+   
+   return isComment;
 }
 
 void POVRayParser::checkComments(std::ifstream &in) {

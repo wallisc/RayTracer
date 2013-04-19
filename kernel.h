@@ -5,6 +5,9 @@
 #include <vector_types.h>
 #include "TokenData.h"
 
-extern "C" void launch_kernel(TKSceneData *data, int width, int height, uchar4 *output);
+typedef enum {PHONG, COOK_TORRANCE} ShadingType;
+
+extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width, 
+                              int height, uchar4 *output);
 
 #endif //KERNEL_H

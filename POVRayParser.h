@@ -24,7 +24,7 @@ private:
    static int parsePlane(std::ifstream &in, TKSceneData *data);
    static int parseTriangle(std::ifstream &in, TKSceneData *data);
 
-   static int parseModifiers(std::ifstream &in, TKModifier *m, glm::mat4 *matStack);
+   static int parseModifiers(std::ifstream &in, TKModifier *m);
 
    static int parsePigment(std::ifstream &in, TKPigment *pigment);
    static int parseFinish(std::ifstream &in, TKFinish *finish);

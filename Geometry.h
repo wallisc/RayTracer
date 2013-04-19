@@ -8,13 +8,21 @@
 
 class Geometry {
 public:
-   __device__ Geometry(const Material &material) : mat(material) {}
-   __device__ virtual float getIntersection(const Ray &r) const = 0;
+   __device__ Geometry(const Material &material, 
+         const glm::mat4 &inverseTransform) : mat(material), 
+         invTrans(inverseTransform) {}
+
+   __device__ float getIntersection(const Ray &r) {
+      return intersects(r.transform(invTrans));
+   }
+
    __device__ Material getMaterial() const { return mat; };
-   //TODO make this function more efficient (take in a param t also?)
    __device__ virtual glm::vec3 getNormalAt(const Ray &r, float param) const = 0;
    
 private:
+   __device__ virtual float intersects(const Ray &transformedRay) const = 0;
+
    Material mat;
+   glm::mat4 invTrans;
 };
 #endif //GEOMETRY_H

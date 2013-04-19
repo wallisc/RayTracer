@@ -11,13 +11,16 @@ light_source {<-100, 100, 100> color rgb <1.5, 1.5, 1.5>}
 sphere { <0, 0, 0>, 2
    pigment { color rgb <1.0, 0.0, 0.0>}
    finish {ambient 0.2 diffuse 0.4 specular 0.5 roughness 0.5}
-   translate <-4, 0, 0>
+   scale <.5, 2, .5> 
+   rotate <0, 0, 45>
 }
 
 sphere { <0, 0, 0>, 2
    pigment { color rgb <0.0, 1.0, 0.0>}
    finish {ambient 0.2 diffuse 0.4 specular 0.5 roughness 0.25}
    translate <0, 0, 0>
+   scale <2, .5, .5>
+   rotate <0, 0, 45>
 }
 
 sphere { <0, 0, 0>, 2

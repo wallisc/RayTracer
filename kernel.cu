@@ -9,6 +9,8 @@
 #include "glm/glm.hpp"
 #include "kernel.h"
 #include "Shader.h"
+#include "PhongShader.h"
+#include "CookTorranceShader.h"
 #include "cudaError.h"
 
 const int kBlockWidth = 16;
@@ -33,7 +35,7 @@ __device__ bool isInShadow(Ray shadow, Geometry *geomList[], int geomCount,
 
 __device__ uchar4 shadeObject(Geometry *geomList[], int geomCount, 
                               Light *lights[], int lightCount, int objIdx, 
-                              float intParam, Ray ray) {
+                              float intParam, Ray ray, Shader **shader) {
       uchar4 clr;
       glm::vec3 intersectPoint = ray.getPoint(intParam);
       Material m = geomList[objIdx]->getMaterial();
@@ -44,9 +46,10 @@ __device__ uchar4 shadeObject(Geometry *geomList[], int geomCount,
          vec3 lightDir = lights[i]->getLightDir(intersectPoint);
          vec3 normal = geomList[objIdx]->getNormalAt(ray, intParam);
          Ray shadow = lights[i]->getShadow(intersectPoint);
-         totalLight += Shader::shade(m.amb, m.dif, m.spec, m.rough, 
-               glm::normalize(-ray.d), lightDir, light, normal,
-               isInShadow(shadow, geomList, geomCount, objIdx)); 
+         bool inShadow = isInShadow(shadow, geomList, geomCount, objIdx);
+
+         totalLight += (*shader)->shade(m.amb, m.dif, m.spec, m.rough, 
+               glm::normalize(-ray.d), lightDir, light, normal, inShadow); 
       }
 
       clr.x = clamp(m.clr.x * totalLight.x * 255.0, 0.0f, 255.0f); 
@@ -57,33 +60,46 @@ __device__ uchar4 shadeObject(Geometry *geomList[], int geomCount,
 }
 
 __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *sphereTks, int numSpheres,
-      TKPlane *planeTks, int numPlanes, TKPointLight *pLightTks, int numPointLights) {
+      TKPlane *planeTks, int numPlanes, TKPointLight *pLightTks, int numPointLights, 
+      Shader **shader, ShadingType stype) {
    int geomIdx = 0;
    int lightIdx = 0;
 
    // This should really only be run with one thread and block anyways, but this is a safety check
    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
 
+      // Setup the shader
+      switch(stype) {
+         case PHONG:
+           *shader = new PhongShader(); 
+           break;
+         case COOK_TORRANCE:
+           *shader = new CookTorranceShader();
+           break;
+         default:
+           printf("Improper shading type specified\n");
+           break;
+      }
+
       // Add all the geometry
       for (int i = 0; i < numSpheres; i++) {
          const TKSphere &s = sphereTks[i];
          const TKFinish f = s.mod.fin;
          Material m(s.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
-         geomList[geomIdx++] = new Sphere(s.p, s.r, m);
+         geomList[geomIdx++] = new Sphere(s.p, s.r, m, s.mod.invTrans);
       }
 
       for (int i = 0; i < numPlanes; i++) {
          const TKPlane &p = planeTks[i];
          const TKFinish &f = p.mod.fin;
          Material m(p.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
-         geomList[geomIdx++] = new Plane(p.d, p.n, m);
+         geomList[geomIdx++] = new Plane(p.d, p.n, m, p.mod.invTrans);
       }
 
       // Add all the lights
       for (int i = 0; i < numPointLights; i++) {
          TKPointLight &p = pLightTks[i];
          lights[lightIdx++] = new PointLight(p.pos, p.clr);
-
       }
    }
 }
@@ -103,7 +119,7 @@ __global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightLis
 
 __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
       Geometry *geomList[], int geomCount, Light *lights[], int lightCount,  
-      uchar4 *output) {
+      uchar4 *output, Shader **shader) {
 
    int x = blockIdx.x * blockDim.x + threadIdx.x;
    int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -142,7 +158,7 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
 
    if (closestShapeIdx != kNoShapeFound) {
       clr = shadeObject(geomList, geomCount, lights, lightCount, 
-                        closestShapeIdx, t, r);
+                        closestShapeIdx, t, r, shader);
    } else {
       clr.x = 0; clr.y = 0; clr.z = 0; clr.w = 255;
    }
@@ -151,7 +167,7 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
 }
 
 void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightList, 
-   int *retGeometryCount, int *retLightCount) {
+   int *retGeometryCount, int *retLightCount, Shader **dShader, ShadingType stype) {
   int geometryCount = 0;
   int lightCount = 0;
 
@@ -190,7 +206,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightL
 
   // Fill up GeomList and LightList with actual objects on the GPU
   initScene<<<1, 1>>>(*dGeomList, *dLightList, dSphereTokens, sphereCount, dPlaneTokens, 
-        planeCount, dPointLightTokens, pointLightCount);
+        planeCount, dPointLightTokens, pointLightCount, dShader, stype);
 
   if (dSphereTokens) HANDLE_ERROR(cudaFree(dSphereTokens));
   if (dPlaneTokens) HANDLE_ERROR(cudaFree(dPlaneTokens));
@@ -207,9 +223,11 @@ void freeGPUScene(Geometry **dGeomList, int geomCount, Light **dLightList,
   HANDLE_ERROR(cudaFree(dLightList));
 }
 
-extern "C" void launch_kernel(TKSceneData *data, int width, int height, uchar4 *output) {
+extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width, 
+                              int height, uchar4 *output) {
   Geometry **dGeomList; 
   Light **dLightList;
+  Shader **dShader;
 
   uchar4 *dOutput;
 
@@ -217,22 +235,23 @@ extern "C" void launch_kernel(TKSceneData *data, int width, int height, uchar4 *
   int lightCount;
 
 
-  allocateGPUScene(data, &dGeomList, &dLightList, &geometryCount, &lightCount);
+  HANDLE_ERROR(cudaMalloc(&dShader, sizeof(Shader*)));
   HANDLE_ERROR(cudaMalloc(&dOutput, sizeof(uchar4) * width * height));
 
+  allocateGPUScene(data, &dGeomList, &dLightList, &geometryCount, &lightCount, dShader, stype);
+  cudaDeviceSynchronize();
+  checkCUDAError("AllocateGPUScene failed");
 
   dim3 dimBlock(kBlockWidth, kBlockWidth);
   dim3 dimGrid((width - 1) / kBlockWidth + 1, (height - 1) / kBlockWidth + 1);
   rayTrace<<<dimGrid, dimBlock>>>(width, height, *data->camera, 
-        dGeomList, geometryCount, dLightList, lightCount, dOutput);
+        dGeomList, geometryCount, dLightList, lightCount, dOutput, dShader);
 
   cudaDeviceSynchronize();
-  checkCUDAError("kernel failed");
+  checkCUDAError("RayTrace kernel failed");
 
   freeGPUScene(dGeomList, geometryCount, dLightList, lightCount);
   HANDLE_ERROR(cudaMemcpy(output, dOutput, 
            sizeof(uchar4) * width * height, cudaMemcpyDeviceToHost));
   HANDLE_ERROR(cudaFree(dOutput));
 }
-
-

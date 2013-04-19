@@ -1,6 +1,7 @@
 CC=nvcc
 LD=nvcc
 CUDAFLAGS= -O3 -arch=sm_21 -Xptxas -dlcm=ca 
+ALL= cudaError.h kernel.h Plane.h Shader.h Geometry.h Light.h PointLight.h Ray.h Sphere.h TokenData.h Material.h Util.h
 
 all: raytrace.cpp POVRayParser.o kernel.o
 	$(CC) $(CUDAFLAGS) raytrace.cpp Image.cpp POVRayParser.o kernel.o -o raytrace
@@ -8,7 +9,7 @@ all: raytrace.cpp POVRayParser.o kernel.o
 POVRayParser.o: POVRayParser.cpp POVRayParser.h
 	$(CC) $(CUDAFLAGS) -c POVRayParser.cpp
 
-kernel.o: kernel.cu
+kernel.o: kernel.cu $(ALL)
 	$(CC) $(CUDAFLAGS) -w -c kernel.cu  
 
 polymorphism: polymorphism.cu

@@ -39,6 +39,7 @@ typedef struct TKFinish {
 typedef struct TKModifier {
    TKPigment pig;
    TKFinish fin;
+   glm::mat4 invTrans;
 } TKModifier;
 
 typedef struct TKPointLight {
