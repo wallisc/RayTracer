@@ -63,15 +63,15 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
       vec3 totalLight(0.0f);
 
       vec3 light, lightDir, normal, eyeVec;
-      float lastRefl = 1.0f;
+      float compoundedRefl = 1.0f;
 
 
       for (int bounce = 0; bounce < kMaxRecurseCount; bounce++) {
          if (bounce > 0) {
             if (m.refl <= 0.0) break;
-            lastRefl = m.refl;
+            compoundedRefl *= m.refl;
          
-            vec3 reflect = 2.0f * glm::dot(normal, lightDir) * normal - eyeVec;
+            vec3 reflect = 2.0f * glm::dot(normal, eyeVec) * normal - eyeVec;
             ray = Ray(intersectPoint, reflect);
 
             getClosestIntersection(ray, geomList, geomCount, &objIdx, &intParam);
@@ -89,8 +89,8 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
             Ray shadow = lights[lightIdx]->getShadow(intersectPoint);
             bool inShadow = isInShadow(shadow, geomList, geomCount, objIdx);
 
-            totalLight += lastRefl * (*shader)->shade(m.clr, m.amb, m.dif, m.spec, m.rough, 
-                  eyeVec, lightDir, light, normal, inShadow); 
+            totalLight += compoundedRefl * (*shader)->shade(m.clr, m.amb, m.dif, 
+                  m.spec, m.rough, eyeVec, lightDir, light, normal, inShadow); 
 
          }
       }
