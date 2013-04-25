@@ -6,6 +6,7 @@
 #include "PointLight.h"
 #include "Sphere.h"
 #include "Plane.h"
+#include "Triangle.h"
 #include "glm/glm.hpp"
 #include "kernel.h"
 #include "Shader.h"
@@ -19,9 +20,8 @@ const float kMaxDist = FLT_MAX;
 
 using glm::vec3;
 
-__device__ bool isInShadow(Ray shadow, Geometry *geomList[], int geomCount, 
+__device__ bool isInShadow(const Ray &shadow, Geometry *geomList[], int geomCount, 
       int objIdx) {
-   float t = FLT_MAX;
 
    for (int i = 0; i < geomCount; i++) {
       if (i == objIdx) continue;
@@ -37,7 +37,7 @@ __device__ bool isInShadow(Ray shadow, Geometry *geomList[], int geomCount,
 // retOjIdx and the t-value along the input ray is stored in retParam
 //
 // If no intersection is found, retObjIdx is set to 'kNoShapeFound'
-__device__ void getClosestIntersection(Ray ray, Geometry *geomList[], 
+__device__ void getClosestIntersection(const Ray &ray, Geometry *geomList[], 
                                        int geomCount, int *retObjIdx, 
                                        float *retParam) {
    float t = kMaxDist;
@@ -99,7 +99,7 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
 }
 
 __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *sphereTks, int numSpheres,
-      TKPlane *planeTks, int numPlanes, TKPointLight *pLightTks, int numPointLights, 
+      TKPlane *planeTks, int numPlanes, TKTriangle *triangleTks, int numTris, TKPointLight *pLightTks, int numPointLights, 
       Shader **shader, ShadingType stype) {
    int geomIdx = 0;
    int lightIdx = 0;
@@ -133,6 +133,14 @@ __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *spher
          const TKFinish &f = p.mod.fin;
          Material m(p.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
          geomList[geomIdx++] = new Plane(p.d, p.n, m, p.mod.trans, p.mod.invTrans);
+      }
+
+      for (int i = 0; i < numTris; i++) {
+         const TKTriangle &t = triangleTks[i];
+         const TKFinish f = t.mod.fin;
+         Material m(t.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+         geomList[geomIdx++] = new Triangle(t.p1, t.p2, t.p3, m, t.mod.trans, 
+                                            t.mod.invTrans);
       }
 
       // Add all the lights
@@ -212,6 +220,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightL
   TKSphere *dSphereTokens = NULL;
   TKPlane *dPlaneTokens = NULL;
   TKPointLight *dPointLightTokens = NULL;
+  TKTriangle *dTriangleTokens = NULL;
 
   // Cuda memory allocation
   int sphereCount = data->spheres.size();
@@ -230,6 +239,15 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightL
      geometryCount += planeCount;
   }
 
+  int triangleCount = data->triangles.size();
+  if (triangleCount > 0) {
+     HANDLE_ERROR(cudaMalloc(&dTriangleTokens, sizeof(TKTriangle) * triangleCount));
+     HANDLE_ERROR(cudaMemcpy(dTriangleTokens, &data->triangles[0], 
+           sizeof(TKTriangle) * triangleCount, cudaMemcpyHostToDevice));
+     geometryCount += triangleCount;
+
+  }
+
   int pointLightCount = data->pointLights.size();
   if (pointLightCount > 0) {
       HANDLE_ERROR(cudaMalloc(&dPointLightTokens, 
@@ -243,11 +261,13 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightL
   HANDLE_ERROR(cudaMalloc(dLightList, sizeof(Light *) * lightCount));
 
   // Fill up GeomList and LightList with actual objects on the GPU
-  initScene<<<1, 1>>>(*dGeomList, *dLightList, dSphereTokens, sphereCount, dPlaneTokens, 
-        planeCount, dPointLightTokens, pointLightCount, dShader, stype);
+  initScene<<<1, 1>>>(*dGeomList, *dLightList, dSphereTokens, sphereCount, 
+        dPlaneTokens, planeCount, dTriangleTokens, triangleCount, 
+        dPointLightTokens, pointLightCount, dShader, stype);
 
   if (dSphereTokens) HANDLE_ERROR(cudaFree(dSphereTokens));
   if (dPlaneTokens) HANDLE_ERROR(cudaFree(dPlaneTokens));
+  if (dTriangleTokens) HANDLE_ERROR(cudaFree(dTriangleTokens));
 
   *retGeometryCount = geometryCount;
   *retLightCount = lightCount;

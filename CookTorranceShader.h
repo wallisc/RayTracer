@@ -18,18 +18,21 @@ public:
       light += dif * clamp(glm::dot(normal, lightDir), 0.0f, 1.0f) * lightColor;
 
       // Specular lighting
+      //Calculate the fresnel term
       glm::vec3 h = glm::normalize((lightDir + eyeVec));
-      //TODO roughness shouldn't be the exponent here
-      float f = pow(1.0f + glm::dot(eyeVec, normal), 1.0f / roughness);
+      float ior = 2.0f;
+      float r0 = (1.0f - ior) * (1.0f - ior) / ((1.0f + ior) * (1.0f + ior));
+      float f = r0 + (1.0f - r0)* pow(1.0f - glm::dot(lightDir, normal), 5.0f);
 
       // Calculate the beckman distribution
-      float alp = acos(glm::dot(normal, h));
+      float nDotH = glm::dot(normal, h);
       float mSqr = roughness * roughness;
-      float d = exp(-pow(tan(alp)/(mSqr), 2.0f))/ 
-         (M_PI * mSqr * pow(cos(alp), 4.0f));
+      float d = exp((nDotH * nDotH - 1.0f)/(mSqr * nDotH *nDotH)) /
+                (mSqr * nDotH * nDotH * nDotH * nDotH);
+
 
       // Calculate geometric attenuation
-      float gStart = 2.0f * glm::dot(h, normal) / (glm::dot(eyeVec, h));
+      float gStart = 2.0f * nDotH / (glm::dot(eyeVec, h));
       float g1 = gStart * glm::dot(eyeVec, normal);
       float g2 = gStart * glm::dot(lightDir, normal);
       float g = g1 < g2 ? g1 : g2;

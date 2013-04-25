@@ -20,13 +20,15 @@ int main(int argc, char *argv[]) {
    char *fileName = NULL;
    char *outFile = "sample.tga";
    ShadingType stype = PHONG;
+   int status;
 
-   if (parseArgs(argc, argv, &imgWidth, &imgHeight, &fileName, &outFile, &stype))
-      return EXIT_FAILURE;
-
-
+   status = parseArgs(argc, argv, &imgWidth, &imgHeight, &fileName, &outFile, &stype);
+   // If the arguments were incorrect or the user only used the --help flag
+   if (status == EXIT_FAILURE || !fileName)
+      return status;
+  
    TKSceneData data;
-   int status = POVRayParser::parseFile(fileName, &data);
+   status = POVRayParser::parseFile(fileName, &data);
    if (status != POVRayParser::kSuccess) {
       printf("Error parsing file\n");
       return EXIT_FAILURE;
@@ -58,15 +60,15 @@ int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight,
 
    if (argc < 2) {
       printInputError();
-      return 1;
+      return EXIT_FAILURE;
    }
 
    if (!strcmp(argv[1], "--help")) {
       printf("raytrace options are:\n");
-      printf("\timageWidth\n\timageHeight\n\t-I sample.pov\n");
-      printf("An example command to generate a 1024x800 image" 
-             " using \"input.pov\" is :\n\n");
-      printf("$raytrace 1024 800 -Iinput.pov\n");
+      printf("\timageWidth\n\timageHeight\n\t-I sample.pov\n\t-O output.tga\n");
+      printf("An example command to generate a 1024x800 image named \"image.tga\"" 
+             " using \"input.pov\" with phong shading is :\n\n");
+      printf("$raytrace 1024 800 -p -I input.pov -O image.tga\n");
 
       return EXIT_SUCCESS;
    }
@@ -101,10 +103,10 @@ int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight,
 
    if (!fileName) {
       printInputError();
-      return 1;
+      return EXIT_FAILURE;
    }
 
-   return 0;
+   return EXIT_SUCCESS;
 }
 
 void printInputError() {

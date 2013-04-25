@@ -15,4 +15,4 @@ typedef struct Ray {
 
 } Ray;
 
-#endif RAY_H
+#endif //RAY_H

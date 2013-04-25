@@ -84,6 +84,7 @@ typedef struct TKSceneData {
    std::vector<TKPointLight> pointLights;
 
    std::vector<TKBox> boxes;
+   std::vector<TKTriangle> triangles;
    std::vector<TKSphere> spheres;
    std::vector<TKPlane> planes;
 

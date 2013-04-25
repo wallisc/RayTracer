@@ -168,12 +168,8 @@ int POVRayParser::parseSphere(std::ifstream &in, TKSceneData *data) {
    status = parseVector(in, &s.p);
    if (status != kSuccess) return status;
 
-   in >> nextWord;
-   if (nextWord.compare(",")) {
-      cerr << "Expected \",\" while parsing for box, found: " << nextWord
-           << endl;
-      return kBadFormat;
-   }
+   parseCharacter(in, ',');   
+   if (status != kSuccess) return status;
 
    in >> s.r;
 
@@ -269,13 +265,13 @@ int POVRayParser::parseTriangle(std::ifstream &in, TKSceneData *data) {
    status = parseVector(in, &t.p1);
    if (status != kSuccess) return status;
 
-   status = parseWord(in, ",");
+   status = parseCharacter(in, ',');
    if (status != kSuccess) return status;
 
    status = parseVector(in, &t.p2);
    if (status != kSuccess) return status;
 
-   status = parseWord(in, ",");
+   status = parseCharacter(in, ',');
    if (status != kSuccess) return status;
 
    status = parseVector(in, &t.p3);
@@ -287,6 +283,7 @@ int POVRayParser::parseTriangle(std::ifstream &in, TKSceneData *data) {
 #endif 
 
    status = parseModifiers(in, &t.mod);
+   data->triangles.push_back(t);
    return status;
 }
 

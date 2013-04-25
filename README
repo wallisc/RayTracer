@@ -1,21 +1,34 @@
 Christopher Wallis
 CPE473 
-Project 1
+Project 2
 
 All parts of the ray tracer are working as expected.
 
 Current implemented features are:
  * Adjustable Camera
  * Point lights, spheres, and infinite planes
- * Phong Shading
+ * Phong Shading and Cook-Torrance shading
+ * Reflections
  * Shadows
- * Specifiable resolutions (default is 1024x768)
 
-Times for simple.pov at 640x480
+Flags supported are:
+   [width]    (optional) image width
+   [height]   (optional) image height 
 
-real  0m0.158s
-user  0m0.055s
-sys   0m0.080s
+   -I [file]  Specify input file
+   -O [file]  (optional) Specify output file 
 
-Note: A point light was added to the simple.pov file so that the phong shading 
-      would show.
+   -p         (optional)Use phong shading
+   -t         (optional)Use cook-torrance
+
+   --help     print out readme instructions
+
+Note: The default shading type is phong and if no output is specified,
+the output image will be named "sample.tga". Default image resolution is
+1024x768
+
+Times for valentine.pov at 1024x768
+real  0m0.276s
+user  0m0.133s
+sys   0m0.068s
+
