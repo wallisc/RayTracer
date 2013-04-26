@@ -6,7 +6,7 @@ All parts of the ray tracer are working as expected.
 
 Current implemented features are:
  * Adjustable Camera
- * Point lights, spheres, and infinite planes
+ * Point lights, spheres, infinite planes, and triangles
  * Phong Shading and Cook-Torrance shading
  * Reflections
  * Shadows

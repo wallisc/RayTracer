@@ -13,5 +13,5 @@ kernel.o: kernel.cu $(ALL)
 	$(CC) $(CUDAFLAGS) -w -c kernel.cu  
 
 clean:
-	rm -rf core* *.o *.gch junk* raytrace
+	rm -rf core* *.o *.gch junk* raytrace gmon.out
 
