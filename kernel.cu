@@ -50,49 +50,56 @@ __device__ void getClosestIntersection(const Ray &ray, Geometry *geomList[],
    *retParam = t;
 }
 
-//Note: The ray parameter must stay as a copy (not an instance) 
+//Note: The ray parameter must stay as a copy (not a reference) 
+template <int recLevel> 
 __device__ vec3 shadeObject(Geometry *geomList[], int geomCount, 
                               Light *lights[], int lightCount, int objIdx, 
                               float intParam, Ray ray, Shader **shader) {
+      if (recLevel == 0) return glm::vec3(0.0f);
+
       glm::vec3 intersectPoint = ray.getPoint(intParam);
       Material m = geomList[objIdx]->getMaterial();
       vec3 totalLight(0.0f);
 
-      vec3 light, lightDir, normal, eyeVec;
-      float compoundedRefl = 1.0f;
+      vec3 normal = geomList[objIdx]->getNormalAt(ray, intParam);
+      vec3 eyeVec = glm::normalize(-ray.d);
 
+      for(int lightIdx = 0; lightIdx < lightCount; lightIdx++) {
+         vec3 light = lights[lightIdx]->getLightAtPoint(geomList, geomCount, objIdx, intersectPoint);
+         vec3 lightDir = lights[lightIdx]->getLightDir(intersectPoint);
 
-      for (int bounce = 0; bounce < kMaxRecurseCount; bounce++) {
-         if (bounce > 0) {
-            if (m.refl <= 0.0) break;
-            compoundedRefl *= m.refl;
-         
-            vec3 reflect = 2.0f * glm::dot(normal, eyeVec) * normal - eyeVec;
-            ray = Ray(intersectPoint, reflect);
+         Ray shadow = lights[lightIdx]->getShadowFeeler(intersectPoint);
+         // 2 square roots happening here, could probably be optimized
+         float intersectParam = glm::length(intersectPoint - shadow.o) / glm::length(shadow.d);
+         bool inShadow = isInShadow(shadow, geomList, geomCount, intersectParam); 
+         totalLight += (*shader)->shade(m.clr, m.amb, m.dif, m.spec, m.rough, 
+                                        eyeVec, lightDir, light, normal, 
+                                        inShadow);
+      }
 
-            getClosestIntersection(ray, geomList, geomCount, &objIdx, &intParam);
-            if (objIdx == kNoShapeFound) break;
-            m = geomList[objIdx]->getMaterial();
-            intersectPoint = ray.getPoint(intParam);
-         }
+      vec3 reflectedLight(0.0f);
+      if (m.refl > 0.0f) {
+         Ray reflectRay(intersectPoint, 2.0f * glm::dot(normal, eyeVec) * normal - eyeVec);
+         int reflObjIdx;
+         float reflParam;
 
-         for(int lightIdx = 0; lightIdx < lightCount; lightIdx++) {
-            light = lights[lightIdx]->getLightAtPoint(geomList, geomCount, objIdx, intersectPoint);
-            lightDir = lights[lightIdx]->getLightDir(intersectPoint);
-            normal = geomList[objIdx]->getNormalAt(ray, intParam);
-            eyeVec = glm::normalize(-ray.d);
-
-            Ray shadow = lights[lightIdx]->getShadowFeeler(intersectPoint);
-            // 2 square roots happening here, could probably be optimized
-            float intersectParam = glm::length(intersectPoint - shadow.o) / glm::length(shadow.d);
-            bool inShadow = isInShadow(shadow, geomList, geomCount, intersectParam); 
-            totalLight += compoundedRefl * (*shader)->shade(m.clr, m.amb, m.dif, 
-                  m.spec, m.rough, eyeVec, lightDir, light, normal, inShadow); 
+         getClosestIntersection(reflectRay, geomList, geomCount, &reflObjIdx, &reflParam);
+         if (reflObjIdx != kNoShapeFound) {
+            reflectedLight = shadeObject<recLevel - 1>(geomList, geomCount, 
+                                                       lights, lightCount,
+                                                       reflObjIdx, reflParam,
+                                                       reflectRay, shader);
          }
       }
 
+      totalLight = (1.0f - m.refl) * totalLight + (m.refl) * reflectedLight;
       return totalLight;
 }
+
+template <> 
+__device__ vec3 shadeObject<0>(Geometry *geomList[], int geomCount, 
+                              Light *lights[], int lightCount, int objIdx, 
+                              float intParam, Ray ray, Shader **shader) { return vec3(0.0f); }
 
 __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *sphereTks, int numSpheres,
       TKPlane *planeTks, int numPlanes, TKTriangle *triangleTks, int numTris, TKPointLight *pLightTks, int numPointLights, 
@@ -194,7 +201,7 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
    getClosestIntersection(r, geomList, geomCount, &closestShapeIdx, &t);
 
    if (closestShapeIdx != kNoShapeFound) {
-      vec3 totalColor = shadeObject(geomList, geomCount, lights, lightCount, 
+      vec3 totalColor = shadeObject<kMaxRecurse>(geomList, geomCount, lights, lightCount, 
                         closestShapeIdx, t, r, shader);
 
       clr.x = clamp(totalColor.x * 255.0, 0.0f, 255.0f); 

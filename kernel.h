@@ -6,7 +6,7 @@
 #include "TokenData.h"
 
 typedef enum {PHONG, COOK_TORRANCE} ShadingType;
-const int kMaxRecurseCount = 6;
+const int kMaxRecurse = 6;
 
 extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width, 
                               int height, uchar4 *output);
