@@ -16,8 +16,8 @@ public:
       return glm::normalize(p - point);
    }
 
-   __device__ virtual Ray getShadow(glm::vec3 point) const {
-      return Ray(point, p - point);
+   __device__ virtual Ray getShadowFeeler(glm::vec3 point) const {
+      return Ray(p, point - p);
    }
 
 private:
