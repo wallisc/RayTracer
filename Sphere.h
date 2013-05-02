@@ -27,16 +27,27 @@ private:
    __device__ virtual float intersects(const Ray &ray) const {
 
       glm::vec3 eMinusC = ray.o - c;
+      float dDotD = glm::dot(ray.d, ray.d);
 
       float discriminant = glm::dot(ray.d, (eMinusC)) * glm::dot(ray.d, (eMinusC))
-         - glm::dot(ray.d, ray.d) * (glm::dot(eMinusC, eMinusC) - r * r);
+         - dDotD * (glm::dot(eMinusC, eMinusC) - r * r);
 
       // If the ray doesn't intersect
       if (discriminant < 0.0f) 
          return -1.0f;
 
-      return (glm::dot(-ray.d, eMinusC) - sqrt(discriminant))
-             / glm::dot(ray.d, ray.d);
+
+      float firstIntersect = (glm::dot(-ray.d, eMinusC) - sqrt(discriminant))
+             / dDotD;
+
+      // If the ray is outside the sphere
+      if (isFloatLessThan(0.0, firstIntersect)) {
+         return firstIntersect;
+      // If the ray is inside the sphere
+      } else {
+         return (glm::dot(-ray.d, eMinusC) + sqrt(discriminant))
+             / dDotD;
+      }
    }
 
    glm::vec3 worldSpaceCenter;

@@ -40,7 +40,7 @@ __device__ void getClosestIntersection(const Ray &ray, Geometry *geomList[],
    int closestShapeIdx = kNoShapeFound;
    for (int i = 0; i < geomCount; i++) {
       float dist = geomList[i]->getIntersection(ray);
-      if (dist > 0.0f && dist < t) {
+      if (isFloatLessThan(0.0f, dist) && dist < t) {
          closestShapeIdx = i;
          t = dist;
       }
@@ -51,12 +51,10 @@ __device__ void getClosestIntersection(const Ray &ray, Geometry *geomList[],
 }
 
 //Note: The ray parameter must stay as a copy (not a reference) 
-template <int recLevel> 
+template <int invRecLevel> 
 __device__ vec3 shadeObject(Geometry *geomList[], int geomCount, 
                               Light *lights[], int lightCount, int objIdx, 
                               float intParam, Ray ray, Shader **shader) {
-      if (recLevel == 0) return glm::vec3(0.0f);
-
       glm::vec3 intersectPoint = ray.getPoint(intParam);
       Material m = geomList[objIdx]->getMaterial();
       vec3 totalLight(0.0f);
@@ -78,21 +76,57 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
       }
 
       vec3 reflectedLight(0.0f);
-      if (m.refl > 0.0f) {
+      if (m.refl > 0.0f && invRecLevel > 0) {
          Ray reflectRay(intersectPoint, 2.0f * glm::dot(normal, eyeVec) * normal - eyeVec);
          int reflObjIdx;
          float reflParam;
 
          getClosestIntersection(reflectRay, geomList, geomCount, &reflObjIdx, &reflParam);
          if (reflObjIdx != kNoShapeFound) {
-            reflectedLight = shadeObject<recLevel - 1>(geomList, geomCount, 
+            reflectedLight = shadeObject<invRecLevel - 1>(geomList, geomCount, 
                                                        lights, lightCount,
                                                        reflObjIdx, reflParam,
                                                        reflectRay, shader);
          }
       }
 
-      totalLight = (1.0f - m.refl) * totalLight + (m.refl) * reflectedLight;
+      vec3 refractedLight(0.0f);
+      //TODO move the recursion break condition to a more efficient position
+      if (m.refr > 0.0f && invRecLevel > 0) {
+         float n1, n2;
+         vec3 refrNorm;
+
+         if (glm::dot(eyeVec, normal) < 0) {
+            n1 = m.ior; n2 = kAirIOR;
+            refrNorm = -normal;
+         } else { 
+            n1 = kAirIOR; n2 = m.ior;
+            refrNorm = normal;
+         }
+
+         float dDotN = glm::dot(eyeVec, refrNorm);
+         float nr = n1 / n2;
+         float discriminant = 1.0f - nr * nr * (1.0f - dDotN * dDotN);
+         if (discriminant > 0.0f) {
+            vec3 refracDir = nr * (eyeVec - refrNorm * dDotN) - refrNorm * sqrt(discriminant);
+            Ray refracRay(intersectPoint, refracDir);
+            //printf("Incoming ray is going in %f, %f, %f. Refract ray is going in %f, %f, %f\n", eyeVec.x, eyeVec.y, eyeVec.z, refracDir.x, refracDir.y, refracDir.z);
+            // TODO duplicate code from reflection, DRY
+            int refrObjIdx;
+            float refrParam;
+            getClosestIntersection(refracRay, geomList, geomCount, &refrObjIdx, &refrParam);
+            if (refrObjIdx != kNoShapeFound) {
+               refractedLight = shadeObject<invRecLevel - 1>(geomList, geomCount, 
+                                                          lights, lightCount,
+                                                          refrObjIdx, refrParam,
+                                                          refracRay, shader);
+            }
+        }
+
+      }
+
+      totalLight = (1.0f - m.refl - m.refr) * totalLight
+                  + m.refl * reflectedLight+ m.refr * refractedLight;
       return totalLight;
 }
 

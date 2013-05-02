@@ -7,6 +7,7 @@
 
 typedef enum {PHONG, COOK_TORRANCE} ShadingType;
 const int kMaxRecurse = 6;
+const float kAirIOR = 1.0f;
 
 extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width, 
                               int height, uchar4 *output);
