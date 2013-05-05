@@ -415,7 +415,7 @@ int POVRayParser::parseFinish(std::ifstream &in, TKFinish *finish) {
    }
    nextWord = nextWord.substr(1, nextWord.length());
 
-   while(nextWord.compare("}")) {
+   while(nextWord[0] != '}') {
       if (nextWord.length() == 0) {
          //Do nothing
       } else if (!nextWord.compare("ambient")) {
@@ -458,6 +458,11 @@ int POVRayParser::parseFinish(std::ifstream &in, TKFinish *finish) {
          return kBadFormat;
       }
       in >> nextWord;
+   }
+
+   //If there was more after the '}', put it back into the stream
+   for (int i = nextWord.length() - 1; i > 0; i--) {
+      in.unget();
    }
 
    return kSuccess;
