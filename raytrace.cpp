@@ -7,8 +7,8 @@
 #include "POVRayParser.h"
 #include "Image.h"
 
-const int kDefaultImageWidth = 1024;
-const int kDefaultImageHeight = 768;
+const int kDefaultImageWidth = 800;
+const int kDefaultImageHeight = 600;
 
 void printInputError(); 
 int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, 

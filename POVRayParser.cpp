@@ -43,6 +43,8 @@ int POVRayParser::parseFile(const string &fileName, TKSceneData *data) {
          status = parsePlane(in, data);
       } else if (!firstWord.compare("triangle")) {
          status = parseTriangle(in, data);
+      } else if (!firstWord.compare("smooth_triangle")) {
+         status = parseSmoothTriangle(in, data);
       } else {
          cerr << "Unrecognized object: ";
          cerr << firstWord << endl;
@@ -254,6 +256,53 @@ int POVRayParser::parsePlane(std::ifstream &in, TKSceneData *data) {
    return status;
 }
 
+int POVRayParser::parseSmoothTriangle(std::ifstream &in, TKSceneData *data) {
+   int status;
+   TKSmoothTriangle t;
+   string nextWord;
+
+   status = parseCharacter(in, '{');   
+   if (status != kSuccess) return status;
+
+   status = parseVector(in, &t.p1);
+   if (status != kSuccess) return status;
+   status = parseCharacter(in, ',');
+   if (status != kSuccess) return status;
+
+   status = parseVector(in, &t.n1);
+   if (status != kSuccess) return status;
+   status = parseCharacter(in, ',');
+   if (status != kSuccess) return status;
+
+   status = parseVector(in, &t.p2);
+   if (status != kSuccess) return status;
+   status = parseCharacter(in, ',');
+   if (status != kSuccess) return status;
+
+   status = parseVector(in, &t.n2);
+   if (status != kSuccess) return status;
+   status = parseCharacter(in, ',');
+   if (status != kSuccess) return status;
+
+   status = parseVector(in, &t.p3);
+   if (status != kSuccess) return status;
+   status = parseCharacter(in, ',');
+   if (status != kSuccess) return status;
+
+   status = parseVector(in, &t.n3);
+   if (status != kSuccess) return status;
+
+#ifdef DEBUG
+   printf("Point 1: %f, %f, %f; Point 2: %f, %f, %f; Point 3: %f, %f, %f\n", 
+         t.p1.x, t.p1.y, t.p1.z, t.p2.x, t.p2.y, t.p2.z, t.p3.x, t.p3.y, t.p3.z);
+   printf("Normal 1: %f, %f, %f; Normal 2: %f, %f, %f; Normal 3: %f, %f, %f\n", 
+         t.n1.x, t.n1.y, t.n1.z, t.n2.x, t.n2.y, t.n2.z, t.n3.x, t.n3.y, t.n3.z);
+#endif 
+
+   status = parseModifiers(in, &t.mod);
+   data->smoothTriangles.push_back(t);
+   return status;
+}
 int POVRayParser::parseTriangle(std::ifstream &in, TKSceneData *data) {
    int status;
    TKTriangle t;

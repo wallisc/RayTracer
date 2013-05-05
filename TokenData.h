@@ -78,6 +78,12 @@ typedef struct TKTriangle {
    TKModifier mod;
 } TKTriangle;
 
+typedef struct TKSmoothTriangle {
+   glm::vec3 p1, p2, p3;
+   glm::vec3 n1, n2, n3;
+   TKModifier mod;
+} TKSmoothTriangle;
+
 typedef struct TKSceneData {
    TKCamera *camera;
 
@@ -85,6 +91,7 @@ typedef struct TKSceneData {
 
    std::vector<TKBox> boxes;
    std::vector<TKTriangle> triangles;
+   std::vector<TKSmoothTriangle> smoothTriangles;
    std::vector<TKSphere> spheres;
    std::vector<TKPlane> planes;
 
