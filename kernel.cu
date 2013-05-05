@@ -22,7 +22,6 @@ const float kMaxDist = FLT_MAX;
 using glm::vec3;
 
 __device__ bool isInShadow(const Ray &shadow, Geometry *geomList[], int geomCount, float intersectParam) {
-   return false;
    for (int i = 0; i < geomCount; i++) {
       float dist = geomList[i]->getIntersection(shadow);
       if (isFloatAboveZero(dist) && isFloatLessThan(dist, intersectParam)) { 
