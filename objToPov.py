@@ -1,3 +1,7 @@
+# Converts a .obj file to a povray file using smooth_triangles
+# Christopher Wallis
+# Example usage: 'python objToPov.py bunny.obj'
+
 import sys, re 
 
 DEFAULT_CAMERA = """

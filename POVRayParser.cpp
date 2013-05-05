@@ -2,8 +2,9 @@
 #include <sstream>
 #include <stdio.h>
 #include "glm/glm.hpp"
-#include "glm/gtc/matrix_inverse.hpp"
+#include "glm/core/func_matrix.hpp"
 #include "glm/gtc/matrix_transform.hpp"
+#include "glm/gtc/matrix_inverse.hpp"
 
 using namespace std;
 using glm::vec3;
@@ -363,8 +364,8 @@ int POVRayParser::parseModifiers(std::ifstream &in, TKModifier *m) {
       in >> nextWord;
    }
    
-   m->trans = glm::transpose(matStack);
-   m->invTrans = glm::inverseTranspose(matStack);
+   m->trans = matStack;
+   m->invTrans = glm::inverse(matStack);
 
    return kSuccess;
 }

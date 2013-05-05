@@ -10,7 +10,7 @@ public:
    __device__ Sphere(const glm::vec3 &center, float radius, const Material &mat, 
          const glm::mat4 trans, const glm::mat4 &invTrans) :
       Geometry(mat, trans, invTrans), c(center), r(radius) {
-         glm::vec4 wc = glm::vec4(c.x, c.y, c.z, 1.0f) * trans;
+         glm::vec4 wc = trans * glm::vec4(c.x, c.y, c.z, 1.0f);
          worldSpaceCenter = glm::vec3(wc.x, wc.y, wc.z); 
       }
 

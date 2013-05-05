@@ -1,5 +1,2 @@
 Optimized the sphere intersections
-Parse finish doesn't handle '}}'
-Duplicate code in Smooth Triangle
-Not normalizing the ray direction leads to stretch shadow rays which can cause close t-values which lead to annoying floating point comparisons
-Not applying transforms correctly (shouldn't be transforming points by the inverse TRANSPOSE)
+Handling for files that take the kernel over 10 seconds (time out)

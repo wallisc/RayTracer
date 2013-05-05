@@ -1,0 +1,3 @@
+Optimized the sphere intersections
+Parse finish doesn't handle '}}'
+Not applying transforms correctly (shouldn't be transforming points by the inverse TRANSPOSE)

@@ -7,6 +7,12 @@ camera {
 }
 
 light_source { <30, 10, 30> color rgb <1.0, 1.0, 1.0> }
+
+plane { <0, 1, 0>, -.5 
+    pigment { color rgb <0.8, 0.8, 0.8> }
+    finish { ambient 0.2 diffuse 0.6 specular 0.2 reflection .3 roughness 0.05 }
+}
+
 smooth_triangle {
    <-0.865619, 0.660867, 0.084327>, <-0.869341, 0.110942, -0.481599>,
    <-0.896984, 0.633074, 0.137748>, <-0.896538, -0.015145, -0.442709>,

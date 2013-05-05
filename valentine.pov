@@ -23,7 +23,8 @@ rotate <0, 0, -25>
 translate <1.2, 0 ,0>
 }
 
-plane {<0, 1, 0>, -4      
+plane {<0, 1, 0>, 0      
 pigment {color rgb <0.6, 0.2, 1.0>}
 finish {ambient 0.3 diffuse 0.8 specular 0.8 roughness 0.001 reflection 0.5}
+translate <0, -4 ,0>
 }

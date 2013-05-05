@@ -43,16 +43,12 @@ __device__ void getClosestIntersection(const Ray &ray, Geometry *geomList[],
       float dist = geomList[i]->getIntersection(ray);
 
 
-      glm::vec3 newNorm = geomList[i]->getNormalAt(ray, dist);
-      glm::vec3 eye = glm::normalize(-ray.d);
-      //if (glm::dot(eye, newNorm) < 0.0f)
-      //   continue;
       // If two faces are very close, this picks the face that's normal
       // is closer to the incoming ray
       if (isFloatEqual(t, dist)) {
          glm::vec3 oldNorm = geomList[closestShapeIdx]->getNormalAt(ray, t);
-         //glm::vec3 newNorm = geomList[i]->getNormalAt(ray, dist);
-         //glm::vec3 eye = glm::normalize(-ray.d);
+         glm::vec3 newNorm = geomList[i]->getNormalAt(ray, dist);
+         glm::vec3 eye = glm::normalize(-ray.d);
          if (glm::dot(eye, newNorm) > glm::dot(eye, oldNorm)) {
             closestShapeIdx = i;
             t = dist;

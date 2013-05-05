@@ -12,7 +12,7 @@ public:
          const Material &mat, const glm::mat4 trans,
          const glm::mat4 &invTrans) :
       Geometry(mat, trans, invTrans), n(normal), d(distance) {
-         glm::vec4 wn = glm::vec4(n.x, n.y, n.z, 1.0f) * trans;
+         glm::vec4 wn = trans * glm::vec4(n.x, n.y, n.z, 0.0f);
          worldSpaceN = glm::vec3(wn.x, wn.y, wn.z);
       }
 
