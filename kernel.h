@@ -4,6 +4,9 @@
 #include <cuda.h>
 #include <vector_types.h>
 #include "TokenData.h"
+#include "Geometry.h"
+#include "Light.h"
+#include "Shader.h"
 
 typedef enum {PHONG, COOK_TORRANCE} ShadingType;
 const int kMaxRecurse = 1;

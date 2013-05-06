@@ -10,7 +10,7 @@ public:
    static int parseFile(const std::string &fileName, 
          TKSceneData *data);
 
-   enum {kSuccess = 0, kFileNotFound, kBadFormat};
+   enum {kSuccess = 0, kFileNotFound, kBadFormat, kUnsupportedObject};
 
 private:
    enum {kBufferSize = 200};

@@ -1,25 +1,24 @@
 #include <stdio.h>
 #include <float.h>
 
-#include "Geometry.h"
 #include "Light.h"
+#include "Camera.h"
 #include "PointLight.h"
 #include "Sphere.h"
 #include "Plane.h"
 #include "Triangle.h"
 #include "glm/glm.hpp"
-#include "kernel.h"
-#include "Shader.h"
 #include "PhongShader.h"
 #include "SmoothTriangle.h"
 #include "CookTorranceShader.h"
 #include "cudaError.h"
+#include "kernel.h"
+
+using glm::vec3;
 
 const int kBlockWidth = 16;
 const int kNoShapeFound = -1;
 const float kMaxDist = FLT_MAX;
-
-using glm::vec3;
 
 __device__ bool isInShadow(const Ray &shadow, Geometry *geomList[], int geomCount, float intersectParam) {
    for (int i = 0; i < geomCount; i++) {
@@ -39,9 +38,9 @@ __device__ void getClosestIntersection(const Ray &ray, Geometry *geomList[],
       int geomCount, int *retObjIdx, float *retParam) {
    float t = kMaxDist;
    int closestShapeIdx = kNoShapeFound;
+
    for (int i = 0; i < geomCount; i++) {
       float dist = geomList[i]->getIntersection(ray);
-
 
       // If two faces are very close, this picks the face that's normal
       // is closer to the incoming ray
@@ -56,7 +55,6 @@ __device__ void getClosestIntersection(const Ray &ray, Geometry *geomList[],
 
       // Otherwise, if one face is front of the current one
       } else if (isFloatAboveZero(dist) && dist < t) {
-         //if (t - dist < 0.2f) { printf("Changing t from %f to %f\nIndex change from %d to %d\n", t, dist, closestShapeIdx, i); }
          closestShapeIdx = i;
          t = dist;
       }
@@ -71,22 +69,21 @@ template <int invRecLevel>
 __device__ vec3 shadeObject(Geometry *geomList[], int geomCount, 
       Light *lights[], int lightCount, int objIdx, 
       float intParam, Ray ray, Shader **shader) {
+
    glm::vec3 intersectPoint = ray.getPoint(intParam);
    Material m = geomList[objIdx]->getMaterial();
-   vec3 totalLight(0.0f);
-
    vec3 normal = geomList[objIdx]->getNormalAt(ray, intParam);
    vec3 eyeVec = glm::normalize(-ray.d);
+   vec3 totalLight(0.0f);
 
    for(int lightIdx = 0; lightIdx < lightCount; lightIdx++) {
-      vec3 light = lights[lightIdx]->getLightAtPoint(geomList, geomCount, objIdx, intersectPoint);
+      vec3 light = lights[lightIdx]->getLightAtPoint(geomList, geomCount, 
+                                                     objIdx, intersectPoint);
       vec3 lightDir = lights[lightIdx]->getLightDir(intersectPoint);
-
       Ray shadow = lights[lightIdx]->getShadowFeeler(intersectPoint);
-      // 2 square roots happening here, could probably be optimized
-      //float intersectParam = glm::length(intersectPoint - shadow.o) / glm::length(shadow.d);
       float intersectParam = geomList[objIdx]->getIntersection(shadow);
       bool inShadow = isInShadow(shadow, geomList, geomCount, intersectParam); 
+
       totalLight += (*shader)->shade(m.clr, m.amb, m.dif, m.spec, m.rough, 
             eyeVec, lightDir, light, normal, 
             inShadow);
@@ -94,6 +91,7 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
 
    vec3 reflectedLight(0.0f);
    if (m.refl > 0.0f && invRecLevel > 0) {
+
       Ray reflectRay(intersectPoint, 2.0f * glm::dot(normal, eyeVec) * normal - eyeVec);
       int reflObjIdx;
       float reflParam;
@@ -108,7 +106,6 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
    }
 
    vec3 refractedLight(0.0f);
-   //TODO move the recursion break condition to a more efficient position
    if (m.refr > 0.0f && invRecLevel > 0) {
       float n1, n2;
       vec3 refrNorm;
@@ -128,7 +125,6 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
       if (discriminant > 0.0f) {
          vec3 refracDir = nr * (d - refrNorm * dDotN) - refrNorm * sqrt(discriminant);
          Ray refracRay(intersectPoint, refracDir);
-         // TODO duplicate code from reflection, DRY
          int refrObjIdx;
          float refrParam;
          getClosestIntersection(refracRay, geomList, geomCount, &refrObjIdx, &refrParam);
@@ -142,9 +138,8 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
 
    }
 
-   totalLight =  totalLight
+   return totalLight * (1.0f - m.refl - m.refr)
       + m.refl * reflectedLight+ m.refr * refractedLight;
-   return totalLight;
 }
 
 template <> 
@@ -215,9 +210,11 @@ __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *spher
    }
 }
 
-__global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightList[], int lightCount) {
+__global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightList[], int lightCount, Shader **shader) {
    // This should really only be run with one thread and block anyways, but this is a safety check
    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
+      delete *shader;
+
       for (int i = 0; i < geomCount; i++) {
          delete geomList[i];
       }
@@ -228,13 +225,15 @@ __global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightLis
    }
 }
 
-
-__global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
+__global__ void rayTrace(int resWidth, int resHeight, Camera cam,
       Geometry *geomList[], int geomCount, Light *lights[], int lightCount,  
-      uchar4 *output, Shader **shader) {
+      uchar4 *output, Shader **shader, int blockOffset) {
 
-   int x = blockIdx.x * blockDim.x + threadIdx.x;
-   int y = blockIdx.y * blockDim.y + threadIdx.y;
+   int blocksPerRow = (resWidth - 1) / blockDim.x + 1;
+   int blockX = (blockIdx.x + blockOffset) % blocksPerRow;
+   int blockY = (blockIdx.x + blockOffset) / blocksPerRow;
+   int x = blockX * blockDim.x + threadIdx.x;
+   int y = blockY * blockDim.y + threadIdx.y;
 
    if (x >= resWidth || y >= resHeight)
       return;
@@ -250,20 +249,16 @@ __global__ void rayTrace(int resWidth, int resHeight, TKCamera cam,
    // .5f is because the magnitude of cam.right and cam.up should be equal
    // to the width and height of the image plane in world space
    vec3 rPos = u *.5f * cam.right + v * .5f * cam.up + cam.pos;
-
-   //TODO if the cam.lookAt - cam.pos was already normalized, could lead to 
-   // speedups
-   vec3 lookAtVec = glm::normalize(cam.lookAt - cam.pos);
-   vec3 rDir = rPos - cam.pos + lookAtVec;
-   Ray r(rPos, rDir);
+   vec3 rDir = rPos - cam.pos + cam.lookAtDir;
+   Ray ray(rPos, rDir);
 
    float t;
    int closestShapeIdx;
-   getClosestIntersection(r, geomList, geomCount, &closestShapeIdx, &t);
+   getClosestIntersection(ray, geomList, geomCount, &closestShapeIdx, &t);
 
    if (closestShapeIdx != kNoShapeFound) {
       vec3 totalColor = shadeObject<kMaxRecurse>(geomList, geomCount, lights, lightCount, 
-            closestShapeIdx, t, r, shader);
+            closestShapeIdx, t, ray, shader);
 
       clr.x = clamp(totalColor.x * 255.0, 0.0f, 255.0f); 
       clr.y = clamp(totalColor.y * 255.0, 0.0f, 255.0f); 
@@ -348,11 +343,12 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightL
 }
 
 void freeGPUScene(Geometry **dGeomList, int geomCount, Light **dLightList, 
-      int lightCount) {
-   deleteScene<<<1, 1>>>(dGeomList, geomCount, dLightList, lightCount);
+      int lightCount, Shader **shader) {
+   deleteScene<<<1, 1>>>(dGeomList, geomCount, dLightList, lightCount, shader);
 
    HANDLE_ERROR(cudaFree(dGeomList));
    HANDLE_ERROR(cudaFree(dLightList));
+   HANDLE_ERROR(cudaFree(shader));
 }
 
 extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width, 
@@ -362,27 +358,39 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
    Shader **dShader;
 
    uchar4 *dOutput;
-
    int geometryCount;
    int lightCount;
 
+   TKCamera camTK = *data->camera;
+   Camera camera(camTK.pos, camTK.up, camTK.right, 
+                 glm::normalize(camTK.lookAt - camTK.pos));
 
+   // Fill the geomList and light list with objects dynamically created on the GPU
    HANDLE_ERROR(cudaMalloc(&dShader, sizeof(Shader*)));
    HANDLE_ERROR(cudaMalloc(&dOutput, sizeof(uchar4) * width * height));
-
    allocateGPUScene(data, &dGeomList, &dLightList, &geometryCount, &lightCount, dShader, stype);
    cudaDeviceSynchronize();
    checkCUDAError("AllocateGPUScene failed");
 
-   dim3 dimBlock(kBlockWidth, kBlockWidth);
-   dim3 dimGrid((width - 1) / kBlockWidth + 1, (height - 1) / kBlockWidth + 1);
-   rayTrace<<<dimGrid, dimBlock>>>(width, height, *data->camera, 
-         dGeomList, geometryCount, dLightList, lightCount, dOutput, dShader);
+   int numKernels = 1;
+   int numBlocks = ((width - 1) / kBlockWidth + 1) * ((height - 1) / kBlockWidth + 1);
+   int blocksPerKernel = (numBlocks - 1) / numKernels + 1;
+   int blockOffset = 0;
+   for (int kernelRun = 0; kernelRun < numKernels; kernelRun++) { 
+      // Do the actual ray tracing
+      dim3 dimBlock(kBlockWidth, kBlockWidth);
+      dim3 dimGrid = kernelRun < numKernels - 1 ? dim3(blocksPerKernel)
+                     : dim3(numBlocks - (numKernels - 1) * blocksPerKernel);
 
-   cudaDeviceSynchronize();
-   checkCUDAError("RayTrace kernel failed");
+      rayTrace<<<dimGrid, dimBlock>>>(width, height, camera, 
+            dGeomList, geometryCount, dLightList, lightCount, dOutput, dShader, blockOffset);
+      cudaDeviceSynchronize();
+      checkCUDAError("RayTrace kernel failed");
+      blockOffset += blocksPerKernel;
+   }
 
-   freeGPUScene(dGeomList, geometryCount, dLightList, lightCount);
+   // Clean up
+   freeGPUScene(dGeomList, geometryCount, dLightList, lightCount, dShader);
    HANDLE_ERROR(cudaMemcpy(output, dOutput, 
             sizeof(uchar4) * width * height, cudaMemcpyDeviceToHost));
    HANDLE_ERROR(cudaFree(dOutput));

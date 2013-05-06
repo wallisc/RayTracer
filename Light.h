@@ -4,6 +4,7 @@
 #include "glm/glm.hpp"
 #include "float.h"
 #include "Util.h"
+#include "Geometry.h"
 #include "Ray.h"
 
 class Light {
