@@ -1,2 +1,1 @@
 Optimized the sphere intersections
-Handling for files that take the kernel over 10 seconds (time out)

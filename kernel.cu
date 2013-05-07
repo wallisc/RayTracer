@@ -21,6 +21,7 @@ const int kNoShapeFound = -1;
 const float kMaxDist = FLT_MAX;
 
 __device__ bool isInShadow(const Ray &shadow, Geometry *geomList[], int geomCount, float intersectParam) {
+   return false;
    for (int i = 0; i < geomCount; i++) {
       float dist = geomList[i]->getIntersection(shadow);
       if (isFloatAboveZero(dist) && isFloatLessThan(dist, intersectParam)) { 
@@ -48,7 +49,9 @@ __device__ void getClosestIntersection(const Ray &ray, Geometry *geomList[],
          glm::vec3 oldNorm = geomList[closestShapeIdx]->getNormalAt(ray, t);
          glm::vec3 newNorm = geomList[i]->getNormalAt(ray, dist);
          glm::vec3 eye = glm::normalize(-ray.d);
-         if (glm::dot(eye, newNorm) > glm::dot(eye, oldNorm)) {
+         float newDot = glm::dot(eye, newNorm);
+         float oldDot = glm::dot(eye, oldNorm);
+         if (newDot > oldDot) {
             closestShapeIdx = i;
             t = dist;
          }
@@ -63,6 +66,70 @@ __device__ void getClosestIntersection(const Ray &ray, Geometry *geomList[],
    *retObjIdx = closestShapeIdx;
    *retParam = t;
 }
+
+template <int invRecLevel>
+__device__ glm::vec3 getReflection(glm::vec3 point, glm::vec3 normal, glm::vec3 eyeVec, 
+   Geometry *geomList[], int geomCount, Light *lights[], int lightCount, 
+   Shader **shader) {
+
+   Ray reflectRay(point, 2.0f * glm::dot(normal, eyeVec) * normal - eyeVec);
+   int reflObjIdx;
+   float reflParam;
+
+   getClosestIntersection(reflectRay, geomList, geomCount, &reflObjIdx, &reflParam);
+   if (reflObjIdx != kNoShapeFound) {
+      return shadeObject<invRecLevel>(geomList, geomCount, 
+            lights, lightCount,
+            reflObjIdx, reflParam,
+            reflectRay, shader);
+   } 
+   return vec3(0.0f);
+}
+
+template <int invRecLevel>
+__device__ glm::vec3 getRefraction(glm::vec3 point, glm::vec3 normal, float ior, glm::vec3 eyeVec, 
+   Geometry *geomList[], int geomCount, Light *lights[], int lightCount, 
+   Shader **shader) {
+      float n1, n2;
+      vec3 refrNorm;
+      vec3 d = -eyeVec;
+
+      if (isFloatLessThan(glm::dot(eyeVec, normal), 0.0f)) {
+         n1 = ior; n2 = kAirIOR;
+         refrNorm = -normal;
+      } else { 
+         n1 = kAirIOR; n2 = ior;
+         refrNorm = normal;
+      }
+
+      float dDotN = glm::dot(d, refrNorm);
+      float nr = n1 / n2;
+      float discriminant = 1.0f - nr * nr * (1.0f - dDotN * dDotN);
+      if (discriminant > 0.0f) {
+         vec3 refracDir = nr * (d - refrNorm * dDotN) - refrNorm * sqrt(discriminant);
+         Ray refracRay(point, refracDir);
+         int refrObjIdx;
+         float refrParam;
+         getClosestIntersection(refracRay, geomList, geomCount, &refrObjIdx, &refrParam);
+         if (refrObjIdx != kNoShapeFound) {
+            return shadeObject<invRecLevel>(geomList, geomCount, 
+                  lights, lightCount,
+                  refrObjIdx, refrParam,
+                  refracRay, shader);
+         }
+      } 
+   return vec3(0.0f);
+}
+
+template <>
+__device__ glm::vec3 getRefraction<0>(glm::vec3 point, glm::vec3 normal, float ior, glm::vec3 eyeVec, 
+   Geometry *geomList[], int geomCount, Light *lights[], int lightCount, 
+   Shader **shader) { return vec3(0.0f); }
+
+template <>
+__device__ glm::vec3 getReflection<0>(glm::vec3 point, glm::vec3 normal, glm::vec3 eyeVec, 
+   Geometry *geomList[], int geomCount, Light *lights[], int lightCount, 
+   Shader **shader) { return vec3(0.0f); }
 
 //Note: The ray parameter must stay as a copy (not a reference) 
 template <int invRecLevel> 
@@ -90,51 +157,15 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
    }
 
    vec3 reflectedLight(0.0f);
-   if (m.refl > 0.0f && invRecLevel > 0) {
-
-      Ray reflectRay(intersectPoint, 2.0f * glm::dot(normal, eyeVec) * normal - eyeVec);
-      int reflObjIdx;
-      float reflParam;
-
-      getClosestIntersection(reflectRay, geomList, geomCount, &reflObjIdx, &reflParam);
-      if (reflObjIdx != kNoShapeFound) {
-         reflectedLight = shadeObject<invRecLevel - 1>(geomList, geomCount, 
-               lights, lightCount,
-               reflObjIdx, reflParam,
-               reflectRay, shader);
-      }
+   if (m.refl > 0.0f && invRecLevel - 1 > 0) {
+      reflectedLight = getReflection<invRecLevel - 1>(intersectPoint, 
+         normal, eyeVec, geomList, geomCount, lights, lightCount, shader);
    }
 
    vec3 refractedLight(0.0f);
-   if (m.refr > 0.0f && invRecLevel > 0) {
-      float n1, n2;
-      vec3 refrNorm;
-      vec3 d = -eyeVec;
-
-      if (isFloatLessThan(glm::dot(eyeVec, normal), 0.0f)) {
-         n1 = m.ior; n2 = kAirIOR;
-         refrNorm = -normal;
-      } else { 
-         n1 = kAirIOR; n2 = m.ior;
-         refrNorm = normal;
-      }
-
-      float dDotN = glm::dot(d, refrNorm);
-      float nr = n1 / n2;
-      float discriminant = 1.0f - nr * nr * (1.0f - dDotN * dDotN);
-      if (discriminant > 0.0f) {
-         vec3 refracDir = nr * (d - refrNorm * dDotN) - refrNorm * sqrt(discriminant);
-         Ray refracRay(intersectPoint, refracDir);
-         int refrObjIdx;
-         float refrParam;
-         getClosestIntersection(refracRay, geomList, geomCount, &refrObjIdx, &refrParam);
-         if (refrObjIdx != kNoShapeFound) {
-            refractedLight = shadeObject<invRecLevel - 1>(geomList, geomCount, 
-                  lights, lightCount,
-                  refrObjIdx, refrParam,
-                  refracRay, shader);
-         }
-      }
+   if (m.refr > 0.0f && invRecLevel - 1 > 0) {
+      refractedLight = getRefraction<invRecLevel - 1>(intersectPoint, 
+         normal, m.ior, eyeVec, geomList, geomCount, lights, lightCount, shader);
 
    }
 

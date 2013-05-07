@@ -1,14 +1,14 @@
 Christopher Wallis
 CPE473 
-Project 2
+Project 3
 
-All parts of the ray tracer are working as expected.
+All parts of the ray tracer are working as expected. 
 
 Current implemented features are:
  * Adjustable Camera
- * Point lights, spheres, infinite planes, and triangles
+ * Point lights, spheres, infinite planes, triangles, and smooth_triangles
  * Phong Shading and Cook-Torrance shading
- * Reflections
+ * Reflections and refractions
  * Shadows
 
 Flags supported are:
@@ -23,12 +23,8 @@ Flags supported are:
 
    --help     print out readme instructions
 
-Note: The default shading type is phong and if no output is specified,
-the output image will be named "sample.tga". Default image resolution is
-1024x768
-
-Times for valentine.pov at 1024x768
-real  0m0.276s
-user  0m0.133s
-sys   0m0.068s
+Times for bunny_small_tris.pov at 800x600 
+real  0m0.565s
+user  0m0.470s
+sys   0m0.075s
 

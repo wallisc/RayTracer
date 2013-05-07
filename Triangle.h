@@ -62,7 +62,7 @@ protected:
       glm::vec3 BP = P - B;
       glm::vec3 BC = C - B;
       glm::vec3 BCxBP = glm::cross(BC, BP);
-      if (glm::dot(N, BCxBP) < 0)
+      if (glm::dot(N, BCxBP) < 0.0f)
          return -1.0f; // P is on the left side
 
       // edge 3, needed to compute u
@@ -71,13 +71,15 @@ protected:
       // inverting the vectors in the cross product:
       // Cross(CA, CP) = cross(CP, AC);
       glm::vec3 CAxCP = glm::cross(CP, AC);
-      float u_num;
-      if ((u_num = glm::dot(N, CAxCP)) < 0)
+      float u_num = glm::dot(N, CAxCP);
+      if (u_num < 0.0f)
          return -1.0f; // P is on the left side;
+      /*
       // compute barycentric coordinates
       float den = glm::dot(N, N); // ABxAC.N where N = ABxAC
       float u = u_num / den;
       float v = v_num / den;
+      */
 
       return t;
    }
