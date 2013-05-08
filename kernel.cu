@@ -73,14 +73,14 @@ __device__ glm::vec3 getReflection(glm::vec3 point, glm::vec3 normal, glm::vec3 
    Shader **shader) {
 
    Ray reflectRay(point, 2.0f * glm::dot(normal, eyeVec) * normal - eyeVec);
-   int reflObjIdx;
-   float reflParam;
+   int objIdx;
+   float t;
 
-   getClosestIntersection(reflectRay, geomList, geomCount, &reflObjIdx, &reflParam);
-   if (reflObjIdx != kNoShapeFound) {
+   getClosestIntersection(reflectRay, geomList, geomCount, &objIdx, &t);
+   if (objIdx != kNoShapeFound) {
       return shadeObject<invRecLevel>(geomList, geomCount, 
             lights, lightCount,
-            reflObjIdx, reflParam,
+            objIdx, t,
             reflectRay, shader);
    } 
    return vec3(0.0f);
@@ -90,34 +90,35 @@ template <int invRecLevel>
 __device__ glm::vec3 getRefraction(glm::vec3 point, glm::vec3 normal, float ior, glm::vec3 eyeVec, 
    Geometry *geomList[], int geomCount, Light *lights[], int lightCount, 
    Shader **shader) {
-      float n1, n2;
-      vec3 refrNorm;
-      vec3 d = -eyeVec;
 
-      if (isFloatLessThan(glm::dot(eyeVec, normal), 0.0f)) {
-         n1 = ior; n2 = kAirIOR;
-         refrNorm = -normal;
-      } else { 
-         n1 = kAirIOR; n2 = ior;
-         refrNorm = normal;
+   float n1, n2;
+   vec3 refrNorm;
+   vec3 d = -eyeVec;
+
+   if (isFloatLessThan(glm::dot(eyeVec, normal), 0.0f)) {
+      n1 = ior; n2 = kAirIOR;
+      refrNorm = -normal;
+   } else { 
+      n1 = kAirIOR; n2 = ior;
+      refrNorm = normal;
+   }
+
+   float dDotN = glm::dot(d, refrNorm);
+   float nr = n1 / n2;
+   float discriminant = 1.0f - nr * nr * (1.0f - dDotN * dDotN);
+   if (discriminant > 0.0f) {
+      vec3 refracDir = nr * (d - refrNorm * dDotN) - refrNorm * sqrt(discriminant);
+      Ray refracRay(point, refracDir);
+      int objIdx;
+      float t;
+      getClosestIntersection(refracRay, geomList, geomCount, &objIdx, &t);
+      if (objIdx != kNoShapeFound) {
+         return shadeObject<invRecLevel>(geomList, geomCount, 
+               lights, lightCount,
+               objIdx, t,
+               refracRay, shader);
       }
-
-      float dDotN = glm::dot(d, refrNorm);
-      float nr = n1 / n2;
-      float discriminant = 1.0f - nr * nr * (1.0f - dDotN * dDotN);
-      if (discriminant > 0.0f) {
-         vec3 refracDir = nr * (d - refrNorm * dDotN) - refrNorm * sqrt(discriminant);
-         Ray refracRay(point, refracDir);
-         int refrObjIdx;
-         float refrParam;
-         getClosestIntersection(refracRay, geomList, geomCount, &refrObjIdx, &refrParam);
-         if (refrObjIdx != kNoShapeFound) {
-            return shadeObject<invRecLevel>(geomList, geomCount, 
-                  lights, lightCount,
-                  refrObjIdx, refrParam,
-                  refracRay, shader);
-         }
-      } 
+   } 
    return vec3(0.0f);
 }
 
@@ -169,8 +170,8 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
 
    }
 
-   return totalLight * (1.0f - m.refl - m.refr)
-      + m.refl * reflectedLight+ m.refr * refractedLight;
+   return totalLight * (1.0f - m.refl - m.alpha)
+      + m.refl * reflectedLight+ m.alpha * refractedLight;
 }
 
 template <> 
@@ -205,21 +206,21 @@ __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *spher
       for (int i = 0; i < numSpheres; i++) {
          const TKSphere &s = sphereTks[i];
          const TKFinish f = s.mod.fin;
-         Material m(s.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+         Material m(s.mod.pig.clr, s.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
          geomList[geomIdx++] = new Sphere(s.p, s.r, m, s.mod.trans, s.mod.invTrans);
       }
 
       for (int i = 0; i < numPlanes; i++) {
          const TKPlane &p = planeTks[i];
          const TKFinish &f = p.mod.fin;
-         Material m(p.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+         Material m(p.mod.pig.clr, p.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
          geomList[geomIdx++] = new Plane(p.d, p.n, m, p.mod.trans, p.mod.invTrans);
       }
 
       for (int i = 0; i < numTris; i++) {
          const TKTriangle &t = triangleTks[i];
          const TKFinish f = t.mod.fin;
-         Material m(t.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+         Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
          geomList[geomIdx++] = new Triangle(t.p1, t.p2, t.p3, m, t.mod.trans, 
                t.mod.invTrans);
       }
@@ -227,7 +228,7 @@ __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *spher
       for (int i = 0; i < numSmthTris; i++) {
          const TKSmoothTriangle &t = smthTriTks[i];
          const TKFinish f = t.mod.fin;
-         Material m(t.mod.pig.clr, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+         Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
          geomList[geomIdx++] = new SmoothTriangle(t.p1, t.p2, t.p3, t.n1, t.n2, t.n3, 
                m, t.mod.trans, t.mod.invTrans);
 
@@ -403,7 +404,7 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
    cudaDeviceSynchronize();
    checkCUDAError("AllocateGPUScene failed");
 
-   int numKernels = 1;
+   int numKernels = 2;
    int numBlocks = ((width - 1) / kBlockWidth + 1) * ((height - 1) / kBlockWidth + 1);
    int blocksPerKernel = (numBlocks - 1) / numKernels + 1;
    int blockOffset = 0;
@@ -415,10 +416,10 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
 
       rayTrace<<<dimGrid, dimBlock>>>(width, height, camera, 
             dGeomList, geometryCount, dLightList, lightCount, dOutput, dShader, blockOffset);
-      cudaDeviceSynchronize();
-      checkCUDAError("RayTrace kernel failed");
       blockOffset += blocksPerKernel;
    }
+   cudaDeviceSynchronize();
+   checkCUDAError("RayTrace kernel failed");
 
    // Clean up
    freeGPUScene(dGeomList, geometryCount, dLightList, lightCount, dShader);

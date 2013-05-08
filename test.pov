@@ -1,28 +1,54 @@
-
 camera {
-    location <-1, 1, 3>
+    location <1, 6, 12>
     up <0, 1, 0>
     right <1.33, 0, 0>
-    look_at <0, 0, -1>
+    look_at <0, 0, 0>
 }
 
-light_source { <30, 10, 30> color rgb <1.0, 1.0, 1.0> }
+light_source { <30, 10, 30> color rgb <0.3, 0.3, 0.3> }
+light_source { <-30, 10, 30> color rgb <0.3, 0.3, 0.3> }
+light_source { <0, 10, 30> color rgb <0.3, 0.3, 0.3> }
 
-smooth_triangle {
-   <-0.198189, 0.88689700000000005, -0.17609 >, <-0.152555, -0.58062599999999998, -0.79974999999999996 >,
-   <-0.19408900000000001, 0.94005799999999995, -0.209948 >, <-0.351462, -0.42960300000000001, -0.83181499999999997 >,
-   <-0.138955, 0.91466499999999995, -0.218972 >, <-0.30770500000000001, -0.60018400000000005, -0.73830700000000005 >
-
-   pigment { color rgb <0.8, 0.8, 0.2> } 
-   finish { ambient 0.2 diffuse 0.6 specular 0.3 roughness 0.05 }
+// left wall
+plane {<1, 0, 0>, -8
+   pigment {color rgb <0.9, 0.2, 0.2>}
+   finish {ambient 0.4 diffuse 0.2 reflection 0.2}
+   rotate <0, 30, 0>
 }
 
-smooth_triangle {
-   <-0.19711699999999999, 0.91886199999999996, -0.13020999999999999 >, <0.38456099999999999, 0.51327900000000004, 0.76724000000000003 >,
-   <-0.15815399999999999, 0.98644200000000004, -0.18654200000000001 >, <0.54019799999999996, 0.32800699999999999, 0.77498199999999995 >,
-   <-0.249391, 0.93906100000000003, -0.11329699999999999 >, <0.48698900000000001, 0.33039499999999999, 0.80850500000000003 >
-
-   pigment { color rgb <0.8, 0.8, 0.2> } 
-   finish { ambient 0.2 diffuse 0.6 specular 0.3 roughness 0.05 }
+// back wall
+plane {<0, 0, -1>, 30
+   pigment {color rgb <0.2, 0.2, 0.9>}
+   finish {ambient 0.4 diffuse 0.2 reflection 0.2}
+   rotate <0, 30, 0>
 }
 
+// back wall on the right
+plane {<0, 0, -1>, 30
+   pigment {color rgb <0.0, 0.9, 0.2>}
+   finish {ambient 0.4 diffuse 0.8 reflection 0.2}
+   rotate <0, -20, 0>
+}
+
+plane { <0, 1, 0>, 0 
+    pigment { color rgb <1.0, 1.0, 1.0> }
+    finish { ambient 0.2 diffuse 0.6 specular 0.2 reflection .3 roughness 0.05 }
+}
+
+sphere { <0, 0, 0>, 2
+   pigment { color rgb <1.0, 0.0, 0.0>}
+   finish {ambient 0.2 diffuse 0.4 specular 0.5 reflection .3 roughness 0.5}
+   translate <-7, 3, 0>
+}
+
+sphere { <0, 0, 0>, 2
+   pigment { color rgb <0.0, 1.0, 0.0>}
+   finish {ambient 0.2 diffuse 0.4 specular 0.5  reflection .3 roughness 0.3}
+   translate <0, 3, -7>
+}
+
+sphere { <0, 0, 0>, 2
+   pigment { color rgb <0.0, 0.0, 1.0>}
+   finish {ambient 0.2 diffuse 0.4 specular 0.5  reflection .3 roughness 0.01}
+   translate <7, 3, 0>
+}

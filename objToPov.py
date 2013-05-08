@@ -18,8 +18,8 @@ light_source { <30, 10, 30> color rgb <1.0, 1.0, 1.0> }
 """
 
 DEFAULT_MATERIAL = """
-   pigment { color rgb <0.8, 0.8, 0.2> } 
-   finish { ambient 0.2 diffuse 0.6 specular 0.3 roughness 0.05 }
+   pigment { color rgbf <0.8, 0.8, 0.8, 0.8> } 
+   finish { ambient 0.2 diffuse 0.6 specular 0.4 roughness 0.05 refraction 1.0 ior 2.42 }
 """
 
 def vecToStr(vec):
