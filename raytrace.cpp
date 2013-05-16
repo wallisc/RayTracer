@@ -9,20 +9,23 @@
 
 const int kDefaultImageWidth = 800;
 const int kDefaultImageHeight = 600;
+const int kDefaultSampleCount = 1;
 
 void printInputError(); 
-int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, 
+int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, int *sampleCount,
               char **fileName, char **outFile, ShadingType *stype);
 
 int main(int argc, char *argv[]) {
    int imgHeight = kDefaultImageHeight;
    int imgWidth = kDefaultImageWidth;
+   int sampleCount = kDefaultSampleCount;
    char *fileName = NULL;
    char *outFile = "sample.tga";
    ShadingType stype = PHONG;
    int status;
 
-   status = parseArgs(argc, argv, &imgWidth, &imgHeight, &fileName, &outFile, &stype);
+   status = parseArgs(argc, argv, &imgWidth, &imgHeight, &sampleCount, 
+                      &fileName, &outFile, &stype);
    // If the arguments were incorrect or the user only used the --help flag
    if (status == EXIT_FAILURE || !fileName)
       return status;
@@ -36,7 +39,7 @@ int main(int argc, char *argv[]) {
 
    // Do the actual ray tracing
    uchar4 *output = (uchar4 *)malloc(imgWidth * imgHeight * sizeof(uchar4));
-   launch_kernel(&data, stype, imgWidth, imgHeight, output);
+   launch_kernel(&data, stype, imgWidth, imgHeight, output, sampleCount);
 
    Image img(imgWidth, imgHeight);
    for (int x = 0; x < imgWidth; x++) {
@@ -52,7 +55,7 @@ int main(int argc, char *argv[]) {
    img.WriteTga(outFile);
 }
 
-int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, 
+int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight, int *sampleCount, 
               char **fileName, char **outFile, ShadingType *stype) {
 
    bool imageWidthParsed = false;
@@ -86,6 +89,8 @@ int parseArgs(int argc, char *argv[], int *imgWidth, int *imgHeight,
          } else {
             *fileName = argv[i] + 2;
          }
+      } else if (argv[i][0] == '-' && argv[i][1] == 's') {
+         *sampleCount = atoi(argv[++i]);
       } else if (argv[i][0] == '-' && argv[i][1] == 'p') {
         *stype = PHONG; 
       } else if (argv[i][0] == '-' && argv[i][1] == 't') {

@@ -128,8 +128,6 @@ int POVRayParser::parseCamera(std::ifstream &in, TKSceneData *data) {
 }
 
 int POVRayParser::parseBox(std::ifstream &in, TKSceneData *data) {
-   cerr << "Boxes are currently unsupported" << endl;
-   return kUnsupportedObject;
    int status;
    TKBox b;
 
@@ -157,7 +155,7 @@ int POVRayParser::parseBox(std::ifstream &in, TKSceneData *data) {
 #endif 
 
    status = parseModifiers(in, &b.mod);
-   //TODO apply matrix stack
+   data->boxes.push_back(b);
    return status;
 }
 
@@ -190,8 +188,8 @@ int POVRayParser::parseSphere(std::ifstream &in, TKSceneData *data) {
 }
 
 int POVRayParser::parseCone(std::ifstream &in, TKSceneData *data) {
-   cerr << "Cones are currently unsupported" << endl;
-   return kUnsupportedObject;
+   //cerr << "Cones are currently unsupported" << endl;
+   //return kUnsupportedObject;
    int status;
    TKCone c;
 

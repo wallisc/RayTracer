@@ -24,5 +24,14 @@ __device__ inline float clamp(float x, float lo, float hi) {
    return x > hi ? hi : x < lo ? lo : x;
 }
 
+__device__ inline float isInRange(float x, float lo, float hi) {
+   return x >= lo && x <= hi;
+}
+
+template <class T>
+__device__ inline void SWAP(T &a, T &b) {
+   T temp = a; a = b; b = temp;
+}
+
 #endif //UTIL_H
 

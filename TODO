@@ -1,1 +1,3 @@
 Optimized the sphere intersections
+Handle if rays are inside a box
+Fix the shader double pointer

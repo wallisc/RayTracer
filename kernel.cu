@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <stdio.h>
 #include <float.h>
 
@@ -5,6 +6,7 @@
 #include "Camera.h"
 #include "PointLight.h"
 #include "Sphere.h"
+#include "Box.h"
 #include "Plane.h"
 #include "Triangle.h"
 #include "glm/glm.hpp"
@@ -13,6 +15,8 @@
 #include "CookTorranceShader.h"
 #include "cudaError.h"
 #include "kernel.h"
+#include "bvh.h"
+#include "curand.h"
 
 using glm::vec3;
 
@@ -21,7 +25,6 @@ const int kNoShapeFound = -1;
 const float kMaxDist = FLT_MAX;
 
 __device__ bool isInShadow(const Ray &shadow, Geometry *geomList[], int geomCount, float intersectParam) {
-   return false;
    for (int i = 0; i < geomCount; i++) {
       float dist = geomList[i]->getIntersection(shadow);
       if (isFloatAboveZero(dist) && isFloatLessThan(dist, intersectParam)) { 
@@ -107,7 +110,7 @@ __device__ glm::vec3 getRefraction(glm::vec3 point, glm::vec3 normal, float ior,
    float nr = n1 / n2;
    float discriminant = 1.0f - nr * nr * (1.0f - dDotN * dDotN);
    if (discriminant > 0.0f) {
-      vec3 refracDir = nr * (d - refrNorm * dDotN) - refrNorm * sqrt(discriminant);
+      vec3 refracDir = nr * (d - refrNorm * dDotN) - refrNorm * sqrtf(discriminant);
       Ray refracRay(point, refracDir);
       int objIdx;
       float t;
@@ -180,7 +183,7 @@ __device__ vec3 shadeObject<0>(Geometry *geomList[], int geomCount,
       float intParam, Ray ray, Shader **shader) { return vec3(0.0f); }
 
 __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *sphereTks, int numSpheres,
-      TKPlane *planeTks, int numPlanes, TKTriangle *triangleTks, int numTris, 
+      TKPlane *planeTks, int numPlanes, TKTriangle *triangleTks, int numTris, TKBox *boxTks, int numBoxes,
       TKSmoothTriangle *smthTriTks, int numSmthTris, TKPointLight *pLightTks, int numPointLights, 
       Shader **shader, ShadingType stype) {
    int geomIdx = 0;
@@ -225,6 +228,13 @@ __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *spher
                t.mod.invTrans);
       }
 
+      for (int i = 0; i < numBoxes; i++) {
+         const TKBox &b = boxTks[i];
+         const TKFinish f = b.mod.fin;
+         Material m(b.mod.pig.clr, b.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+         geomList[geomIdx++] = new Box(b.p1, b.p2, m, b.mod.trans, b.mod.invTrans);
+      }
+
       for (int i = 0; i < numSmthTris; i++) {
          const TKSmoothTriangle &t = smthTriTks[i];
          const TKFinish f = t.mod.fin;
@@ -242,6 +252,14 @@ __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *spher
    }
 }
 
+
+
+__global__ void sortObjects(Geometry *geomList[], int geomCount, BVHNode *root) {
+   // This should really only be run with one thread and block anyways, but this is a safety check
+   if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
+      //std::sort(geomList, geomList + geomCount);
+   }
+}
 __global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightList[], int lightCount, Shader **shader) {
    // This should really only be run with one thread and block anyways, but this is a safety check
    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
@@ -259,13 +277,10 @@ __global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightLis
 
 __global__ void rayTrace(int resWidth, int resHeight, Camera cam,
       Geometry *geomList[], int geomCount, Light *lights[], int lightCount,  
-      uchar4 *output, Shader **shader, int blockOffset) {
+      vec3 output[], Shader **shader) {
 
-   int blocksPerRow = (resWidth - 1) / blockDim.x + 1;
-   int blockX = (blockIdx.x + blockOffset) % blocksPerRow;
-   int blockY = (blockIdx.x + blockOffset) / blocksPerRow;
-   int x = blockX * blockDim.x + threadIdx.x;
-   int y = blockY * blockDim.y + threadIdx.y;
+   int x = blockIdx.x * blockDim.x + threadIdx.x;
+   int y = blockIdx.y * blockDim.y + threadIdx.y;
 
    if (x >= resWidth || y >= resHeight)
       return;
@@ -292,15 +307,36 @@ __global__ void rayTrace(int resWidth, int resHeight, Camera cam,
       vec3 totalColor = shadeObject<kMaxRecurse>(geomList, geomCount, lights, lightCount, 
             closestShapeIdx, t, ray, shader);
 
-      clr.x = clamp(totalColor.x * 255.0, 0.0f, 255.0f); 
-      clr.y = clamp(totalColor.y * 255.0, 0.0f, 255.0f); 
-      clr.z = clamp(totalColor.z * 255.0, 0.0f, 255.0f); 
-      clr.w = 255;
+      output[index] = vec3(clamp(totalColor.x, 0, 1), 
+                           clamp(totalColor.y, 0, 1), 
+                           clamp(totalColor.z, 0, 1)); 
    } else {
-      clr.x = 0; clr.y = 0; clr.z = 0; clr.w = 255;
+      output[index] = vec3(0.0f);
    }
+}
 
-   output[index] = clr;
+__global__ void averageBuffer(int resWidth, int resHeight, int sampleCountSqrRoot, uchar4 *output, vec3 *antiAliasBuffer) {
+   int x = blockIdx.x * blockDim.x + threadIdx.x;
+   int y = blockIdx.y * blockDim.y + threadIdx.y;
+   uchar4 clr;
+   
+   int outputIndex = y * resWidth + x;
+
+   if (x >= resWidth || y >= resHeight)
+      return;
+
+   vec3 endColor(0.0f);
+   for (int xOffset = 0; xOffset < sampleCountSqrRoot; xOffset++) {
+      for (int yOffset = 0; yOffset < sampleCountSqrRoot; yOffset++) {
+         int bufferIndex = x * sampleCountSqrRoot + xOffset + (y * sampleCountSqrRoot + yOffset) * resWidth * sampleCountSqrRoot;
+         endColor += antiAliasBuffer[bufferIndex];
+      }
+   }
+   endColor /= sampleCountSqrRoot * sampleCountSqrRoot;
+   endColor *= 255;
+
+   clr.x = endColor.x; clr.y = endColor.y; clr.z = endColor.z; clr.w = 255;
+   output[outputIndex] = clr; 
 }
 
 void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightList, 
@@ -313,6 +349,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightL
    TKPointLight *dPointLightTokens = NULL;
    TKTriangle *dTriangleTokens = NULL;
    TKSmoothTriangle *dSmthTriTokens = NULL;
+   TKBox *dBoxTokens = NULL;
 
    // Cuda memory allocation
    int sphereCount = data->spheres.size();
@@ -339,6 +376,14 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightL
       geometryCount += triangleCount;
    }
 
+   int boxCount = data->boxes.size();
+   if (boxCount > 0) {
+      HANDLE_ERROR(cudaMalloc(&dBoxTokens, sizeof(TKBox) * boxCount));
+      HANDLE_ERROR(cudaMemcpy(dBoxTokens, &data->boxes[0],
+               sizeof(TKBox) * boxCount, cudaMemcpyHostToDevice));
+      geometryCount += boxCount;
+   }
+
    int smoothTriangleCount = data->smoothTriangles.size();
    if (smoothTriangleCount > 0) {
       HANDLE_ERROR(cudaMalloc(&dSmthTriTokens, sizeof(TKSmoothTriangle) * smoothTriangleCount));
@@ -361,7 +406,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightL
 
    // Fill up GeomList and LightList with actual objects on the GPU
    initScene<<<1, 1>>>(*dGeomList, *dLightList, dSphereTokens, sphereCount, 
-         dPlaneTokens, planeCount, dTriangleTokens, triangleCount, 
+         dPlaneTokens, planeCount, dTriangleTokens, triangleCount, dBoxTokens, boxCount, 
          dSmthTriTokens, smoothTriangleCount, dPointLightTokens, pointLightCount, 
          dShader, stype);
 
@@ -369,6 +414,8 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightL
    if (dPlaneTokens) HANDLE_ERROR(cudaFree(dPlaneTokens));
    if (dTriangleTokens) HANDLE_ERROR(cudaFree(dTriangleTokens));
    if (dSmthTriTokens) HANDLE_ERROR(cudaFree(dSmthTriTokens));
+   if (dBoxTokens) HANDLE_ERROR(cudaFree(dBoxTokens));
+
 
    *retGeometryCount = geometryCount;
    *retLightCount = lightCount;
@@ -384,14 +431,21 @@ void freeGPUScene(Geometry **dGeomList, int geomCount, Light **dLightList,
 }
 
 extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width, 
-      int height, uchar4 *output) {
+      int height, uchar4 *output, int sampleCount) {
    Geometry **dGeomList; 
    Light **dLightList;
    Shader **dShader;
 
+   vec3 *dAntiAliasBuffer;
    uchar4 *dOutput;
    int geometryCount;
    int lightCount;
+
+   int sqrSampleCount = sqrt(sampleCount);
+   if (sqrSampleCount * sqrSampleCount != sampleCount) {
+      printf("Invalid sample count: %d. Sample count for anti aliasing must have an integer square root");
+      return;
+   }
 
    TKCamera camTK = *data->camera;
    Camera camera(camTK.pos, camTK.up, camTK.right, 
@@ -400,24 +454,22 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
    // Fill the geomList and light list with objects dynamically created on the GPU
    HANDLE_ERROR(cudaMalloc(&dShader, sizeof(Shader*)));
    HANDLE_ERROR(cudaMalloc(&dOutput, sizeof(uchar4) * width * height));
+   HANDLE_ERROR(cudaMalloc(&dAntiAliasBuffer, sizeof(vec3) * width * height * sampleCount));
    allocateGPUScene(data, &dGeomList, &dLightList, &geometryCount, &lightCount, dShader, stype);
    cudaDeviceSynchronize();
    checkCUDAError("AllocateGPUScene failed");
 
-   int numKernels = 2;
-   int numBlocks = ((width - 1) / kBlockWidth + 1) * ((height - 1) / kBlockWidth + 1);
-   int blocksPerKernel = (numBlocks - 1) / numKernels + 1;
-   int blockOffset = 0;
-   for (int kernelRun = 0; kernelRun < numKernels; kernelRun++) { 
-      // Do the actual ray tracing
-      dim3 dimBlock(kBlockWidth, kBlockWidth);
-      dim3 dimGrid = kernelRun < numKernels - 1 ? dim3(blocksPerKernel)
-                     : dim3(numBlocks - (numKernels - 1) * blocksPerKernel);
+   int antiAliasWidth = width * sqrSampleCount;
+   int antiAliasHeight = height * sqrSampleCount;
+   dim3 dimBlock(kBlockWidth, kBlockWidth);
+   dim3 dimGrid((antiAliasWidth - 1) / kBlockWidth + 1, (antiAliasHeight- 1) / kBlockWidth + 1);
+   rayTrace<<<dimGrid, dimBlock>>>(width * sqrSampleCount, height * sqrSampleCount, camera, 
+         dGeomList, geometryCount, dLightList, lightCount, dAntiAliasBuffer, dShader);
+   cudaDeviceSynchronize();
+   checkCUDAError("RayTrace kernel failed");
 
-      rayTrace<<<dimGrid, dimBlock>>>(width, height, camera, 
-            dGeomList, geometryCount, dLightList, lightCount, dOutput, dShader, blockOffset);
-      blockOffset += blocksPerKernel;
-   }
+   dimGrid = dim3((width - 1) / kBlockWidth + 1, (height - 1) / kBlockWidth + 1);
+   averageBuffer<<<dimGrid, dimBlock>>>(width, height, sqrSampleCount, dOutput, dAntiAliasBuffer);
    cudaDeviceSynchronize();
    checkCUDAError("RayTrace kernel failed");
 

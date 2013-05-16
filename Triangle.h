@@ -23,6 +23,11 @@ public:
       return worldSpaceNormal;
    }
 
+   __device__ virtual glm::vec3 getCenter() const { 
+      glm::vec3 objSpaceCenter = (p1 + p2 + p3) / 3.0f;
+      return glm::vec3(glm::vec4(objSpaceCenter.x, objSpaceCenter.y, objSpaceCenter.z, 1.0f) * trans);
+   }
+
 protected:
 
    __device__ virtual float intersects(const Ray &r) const {

@@ -20,11 +20,13 @@ Flags supported are:
 
    -p         (optional)Use phong shading
    -t         (optional)Use cook-torrance
+   -s         (optional)Specify a sample rate
 
    --help     print out readme instructions
 
-Times for bunny_small_tris.pov at 800x600 
+Times for bunny_small_tris.pov at 800x600 on a CSL lab machine
 real  0m0.565s
 user  0m0.470s
 sys   0m0.075s
 
+My creative scene is 'iceBot.tga'

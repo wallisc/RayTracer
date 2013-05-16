@@ -11,7 +11,7 @@ light_source {<-5, 3, 0> color rgb <0.3, 0.5, 0.3>}
 light_source {<5, 10, 5> color rgb <0.3, 0.4, 0.5>}
 
 // floor
-plane {<0, 1, 0>, -4
+plane {<0, 1, 0>, -5
    pigment {color rgb <0.2, 0.2, 0.8>}
    finish {ambient 0.4 diffuse 0.2 reflection 0.2}
    translate <0, -1, 0>

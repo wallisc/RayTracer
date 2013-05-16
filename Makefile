@@ -1,7 +1,7 @@
 CC=nvcc
 LD=nvcc
-CUDAFLAGS= -O3 -arch=sm_21 -Xptxas -dlcm=ca 
-ALL= cudaError.h kernel.h Plane.h Shader.h Geometry.h Light.h PointLight.h Ray.h Sphere.h TokenData.h Material.h Util.h PhongShader.h CookTorranceShader.h Triangle.h SmoothTriangle.h
+CUDAFLAGS= -O3 -arch=sm_21 -Xptxas -dlcm=ca #-prec-div=false -prec-sqrt=false -use_fast_math
+ALL= cudaError.h kernel.h Plane.h Shader.h Geometry.h Light.h PointLight.h Ray.h Sphere.h TokenData.h Material.h Util.h PhongShader.h CookTorranceShader.h Triangle.h SmoothTriangle.h Box.h
 
 all: raytrace.cpp POVRayParser.o kernel.o
 	$(CC) $(CUDAFLAGS) raytrace.cpp Image.cpp POVRayParser.o kernel.o -o raytrace

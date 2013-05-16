@@ -18,8 +18,9 @@ public:
 
    __device__ Material getMaterial() const { return mat; };
    __device__ virtual glm::vec3 getNormalAt(const Ray &r, float param) const = 0;
+   __device__ virtual glm::vec3 getCenter() const = 0;
    
-private:
+protected:
    __device__ virtual float intersects(const Ray &transformedRay) const = 0;
 
    Material mat;

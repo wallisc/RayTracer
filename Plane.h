@@ -21,6 +21,11 @@ public:
       return worldSpaceN;
    }
 
+   
+   __device__ virtual glm::vec3 getCenter() const { 
+      return d * worldSpaceN;
+   }
+
 private:
    __device__ virtual float intersects(const Ray &r) const {
       glm::vec3 c = n * d;

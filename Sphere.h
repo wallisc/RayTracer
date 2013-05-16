@@ -23,6 +23,10 @@ public:
       return glm::normalize(pos - worldSpaceCenter);
    }
 
+   __device__ virtual glm::vec3 getCenter() const { 
+      return worldSpaceCenter;
+   }
+
 private:
    __device__ virtual float intersects(const Ray &ray) const {
 
