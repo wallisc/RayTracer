@@ -8,6 +8,8 @@
 #include "Light.h"
 #include "Shader.h"
 
+const int kMaxStackSize = 200;
+
 typedef enum {PHONG, COOK_TORRANCE} ShadingType;
 const int kMaxRecurse = 6;
 const float kAirIOR = 1.0f;

@@ -2,6 +2,8 @@
 #define GEOMETRY_H
 
 #include <cuda.h>
+#include "Geometry.h"
+#include "BoundingBox.h"
 #include "Ray.h"
 #include "Material.h"
 #include "glm/glm.hpp"
@@ -15,6 +17,8 @@ public:
    __device__ float getIntersection(const Ray &r) {
       return intersects(r.transform(invTrans));
    }
+
+   __device__ virtual  BoundingBox getBoundingBox() const = 0;
 
    __device__ Material getMaterial() const { return mat; };
    __device__ virtual glm::vec3 getNormalAt(const Ray &r, float param) const = 0;

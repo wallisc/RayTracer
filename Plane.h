@@ -26,6 +26,10 @@ public:
       return d * worldSpaceN;
    }
 
+   __device__ virtual  BoundingBox getBoundingBox() const {
+      return BoundingBox(glm::vec3(-FLT_MAX), glm::vec3(FLT_MAX));
+   }
+
 private:
    __device__ virtual float intersects(const Ray &r) const {
       glm::vec3 c = n * d;

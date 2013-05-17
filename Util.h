@@ -28,10 +28,19 @@ __device__ inline float isInRange(float x, float lo, float hi) {
    return x >= lo && x <= hi;
 }
 
+__device__ inline float mymin(float x, float y) {
+   return x < y ? x : y;
+}
+
+__device__ inline float mymax(float x, float y) {
+   return x > y ? x : y;
+}
+
 template <class T>
 __device__ inline void SWAP(T &a, T &b) {
    T temp = a; a = b; b = temp;
 }
+
 
 #endif //UTIL_H
 

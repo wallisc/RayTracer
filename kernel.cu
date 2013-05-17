@@ -252,14 +252,70 @@ __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *spher
    }
 }
 
-
-
-__global__ void sortObjects(Geometry *geomList[], int geomCount, BVHNode *root) {
-   // This should really only be run with one thread and block anyways, but this is a safety check
-   if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
-      //std::sort(geomList, geomList + geomCount);
-   }
+__device__ void sortGeometry(Geometry *geomList[], int start, int end) {
+   return;
 }
+
+__global__ void createBVH(Geometry *geomList[], int geomCount, BVHNode *root) {
+   BVHStackEntry stack[kMaxStackSize];
+   int stackSize = 0;
+
+   BVHNode *cursor = root;
+   Geometry **arr = geomList;
+   int listSize = geomCount;
+   int axis = kXAxis;
+
+   do {
+      if (stackSize == kMaxStackSize) {
+         printf("Stack completely full, aborting");
+         return;
+      }
+
+      if (listSize == 1) {
+         cursor->left = new BVHNode(arr[0]);
+         //TODO Make bounding box
+      } else if (listSize == 2) {
+         cursor->left = new BVHNode(arr[0]);
+         cursor->right = new BVHNode(arr[1]);
+         //TODO make a combined bounding box
+      } else {
+         // If the leftside is empty, recursively create that first
+         if (!cursor->left) {
+            cudaSort(arr, listSize, axis);
+            cursor->left = new BVHNode();
+
+            stack[stackSize++] = BVHStackEntry(arr, cursor, listSize, axis);
+
+            // Recurse down the leftside
+            cursor = cursor->left;
+            listSize = listSize / 2;
+            axis = (axis + 1) % kAxisNum;
+         // Otherwise make the rightside
+         } else if (!cursor->right) {
+            cursor->right = new BVHNode();
+
+            stack[stackSize++] = BVHStackEntry(arr, cursor, listSize, axis);
+
+            cursor = cursor->right;
+            arr = arr + listSize / 2;
+            listSize = (listSize - 1) / 2 + 1;
+            axis = (axis + 1) % kAxisNum;
+         } else {
+            //TODO Combine the bounding box of both left and right
+         }
+
+      }
+      
+      // Pop the stack
+      cursor = stack[stackSize - 1].cursor;
+      listSize = stack[stackSize - 1].listSize;
+      arr = stack[stackSize - 1].arr;
+      axis = stack[stackSize - 1].axis;
+      stackSize--;
+      
+   } while (stackSize > 0);
+}
+
 __global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightList[], int lightCount, Shader **shader) {
    // This should really only be run with one thread and block anyways, but this is a safety check
    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
@@ -286,7 +342,6 @@ __global__ void rayTrace(int resWidth, int resHeight, Camera cam,
       return;
 
    int index = y * resWidth + x;
-   uchar4 clr;
 
    // Generate rays
    //Image space coordinates 
@@ -438,6 +493,9 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
 
    vec3 *dAntiAliasBuffer;
    uchar4 *dOutput;
+
+   BVHNode *dBvhRoot;
+
    int geometryCount;
    int lightCount;
 
@@ -456,6 +514,9 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
    HANDLE_ERROR(cudaMalloc(&dOutput, sizeof(uchar4) * width * height));
    HANDLE_ERROR(cudaMalloc(&dAntiAliasBuffer, sizeof(vec3) * width * height * sampleCount));
    allocateGPUScene(data, &dGeomList, &dLightList, &geometryCount, &lightCount, dShader, stype);
+
+   HANDLE_ERROR(cudaMalloc(&dBvhRoot, sizeof(BVHNode)));
+   createBVH<<<1, 1>>>(dGeomList, geometryCount, dBvhRoot);
    cudaDeviceSynchronize();
    checkCUDAError("AllocateGPUScene failed");
 

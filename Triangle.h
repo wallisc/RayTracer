@@ -28,6 +28,17 @@ public:
       return glm::vec3(glm::vec4(objSpaceCenter.x, objSpaceCenter.y, objSpaceCenter.z, 1.0f) * trans);
    }
 
+   __device__ virtual  BoundingBox getBoundingBox() const {
+      glm::vec3 transP1 = glm::vec3(trans*glm::vec4(p1.x, p1.y, p1.z, 1.0f));
+      glm::vec3 transP2 = glm::vec3(trans*glm::vec4(p2.x, p2.y, p2.z, 1.0f));
+      glm::vec3 transP3 = glm::vec3(trans*glm::vec4(p3.x, p3.y, p3.z, 1.0f));
+
+      glm::vec3 min = getSmallestBoxCorner(getSmallestBoxCorner(transP1, transP2), transP3);
+      glm::vec3 max = getBiggestBoxCorner(getBiggestBoxCorner(transP1, transP2), transP3);
+
+      return BoundingBox(min, max);
+   }
+
 protected:
 
    __device__ virtual float intersects(const Ray &r) const {

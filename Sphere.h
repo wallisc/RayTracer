@@ -27,6 +27,10 @@ public:
       return worldSpaceCenter;
    }
 
+   __device__ virtual  BoundingBox getBoundingBox() const {
+      generateBoundingBox(c - glm::vec3(r), c + glm::vec3(r), trans);      
+   }
+
 private:
    __device__ virtual float intersects(const Ray &ray) const {
 
