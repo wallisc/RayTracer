@@ -1,4 +1,6 @@
 Optimized the sphere intersections
-Handle if rays are inside a box
 Add a Interceptable for bounding boxes
 Fix the shader double pointer
+Add shadows back
+Be able to draw recurses
+Change invRecLevel to be a recLevel

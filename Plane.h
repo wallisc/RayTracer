@@ -27,7 +27,7 @@ public:
    }
 
    __device__ virtual  BoundingBox getBoundingBox() const {
-      return BoundingBox(glm::vec3(-FLT_MAX), glm::vec3(FLT_MAX));
+      return BoundingBox(glm::vec3(-FLT_MAX / 5), glm::vec3(FLT_MAX / 5));
    }
 
 private:

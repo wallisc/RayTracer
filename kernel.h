@@ -7,6 +7,7 @@
 #include "Geometry.h"
 #include "Light.h"
 #include "Shader.h"
+#include "bvh.h"
 
 const int kMaxStackSize = 200;
 
@@ -18,7 +19,7 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
                               int height, uchar4 *output, int sampleCount);
 
 template<int t>
-__device__ glm::vec3 shadeObject(Geometry *geomList[], int geomCount, 
+__device__ glm::vec3 shadeObject(BVHTree *tree, 
       Light *lights[], int lightCount, int objIdx, 
       float intParam, Ray ray, Shader **shader);
 

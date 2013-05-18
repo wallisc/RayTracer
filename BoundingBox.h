@@ -3,20 +3,23 @@
 
 #include "glm/glm.hpp"
 #include "GeometryUtil.h"
+#include <cfloat>
 
 const int kPointsPerBox = 8;
 
-class BoundingBox {
-public:
-   __device__ BoundingBox(glm::vec3 nMin, glm::vec3 nMax) 
-      : min(nMin), max(nMax) {}
+typedef struct BoundingBox {
+   __device__ BoundingBox(glm::vec3 nMin = glm::vec3(0.0f), glm::vec3 nMax = glm::vec3(0.0f)) 
+      : min(nMin), max(nMax) {
+         min -= EPSILON;
+         max += EPSILON;
+      }
 
    __device__ float getIntersection(const Ray &ray) {
       return boxIntersect(ray, min, max);
    }
-private:
+
    glm::vec3 min, max;
-};
+} BoundingBox;
 
 __device__ inline BoundingBox generateBoundingBox(const glm::vec3 &min, const glm::vec3 &max, 
                            const glm::mat4 &trans) {
@@ -35,11 +38,17 @@ __device__ inline BoundingBox generateBoundingBox(const glm::vec3 &min, const gl
    for (int i = 0; i < kPointsPerBox; i++) {
       points[i] = trans * points[i]; 
       for (int axis = 0; axis < 3; axis++) {
-         if (points[i][axis] < min[axis]) transMin[axis] = points[i][axis];
-         if (points[i][axis] > max[axis]) transMax[axis] = points[i][axis];
+         if (points[i][axis] < transMin[axis]) transMin[axis] = points[i][axis];
+         if (points[i][axis] > transMax[axis]) transMax[axis] = points[i][axis];
       }
    }
    return BoundingBox(transMin, transMax);
+}
+
+__device__ inline BoundingBox combineBoundingBox(const BoundingBox &bb1, 
+                                                 const BoundingBox &bb2) {
+   return BoundingBox(getSmallestBoxCorner(bb1.min, bb2.min),
+                      getBiggestBoxCorner(bb1.max, bb2.max));
 }
 
 #endif //BOUNDING_BOX_H

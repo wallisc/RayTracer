@@ -13,6 +13,10 @@ __device__ inline int isFloatEqual(float a, float b) {
 }
 
 __device__ inline int isFloatAboveZero(float n) {
+   return n + EPSILON > 0.0f;
+}
+
+__device__ inline int isFloatZeroOrAbove(float n) {
    return n - EPSILON > 0.0f;
 }
 

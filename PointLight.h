@@ -7,8 +7,7 @@ class PointLight : public Light {
 public:
    __device__ PointLight(glm::vec3 position, glm::vec3 color) : p(position), c(color) {}
 
-   __device__ virtual glm::vec3 getLightAtPoint(Geometry *geomList[], int geomCount, 
-         int objIdx, glm::vec3 point) const {
+   __device__ virtual glm::vec3 getLightAtPoint(Geometry *geom, glm::vec3 point) const {
       return c;
    }
 

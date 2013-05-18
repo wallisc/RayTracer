@@ -23,10 +23,10 @@ box { <2, -1, -1>, <4, 3, 1>
    finish {ambient 0.2 diffuse 0.6 specular 0.5 refraction 1.0 ior 1.33 roughness 0.01}
 }
 
-//sphere { <0, 4, 0>, 2
-//   pigment { color rgb <1.0, 1.0, 1.0>}
-//   finish {ambient 0.2 diffuse 0.4 specular 0.5 roughness 0.01}
-//}
+sphere { <0, 4, 0>, 2
+   pigment { color rgb <1.0, 1.0, 1.0>}
+   finish {ambient 0.2 diffuse 0.4 specular 0.5 roughness 0.01}
+}
 
 plane {<0, 1, 0>, -1
    pigment {color rgb <0.2, 0.2, 0.8>}

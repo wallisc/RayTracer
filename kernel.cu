@@ -15,84 +15,127 @@
 #include "CookTorranceShader.h"
 #include "cudaError.h"
 #include "kernel.h"
-#include "bvh.h"
 #include "curand.h"
+
+#define kNoShapeFound NULL
 
 using glm::vec3;
 
 const int kBlockWidth = 16;
-const int kNoShapeFound = -1;
 const float kMaxDist = FLT_MAX;
 
-__device__ bool isInShadow(const Ray &shadow, Geometry *geomList[], int geomCount, float intersectParam) {
-   for (int i = 0; i < geomCount; i++) {
-      float dist = geomList[i]->getIntersection(shadow);
-      if (isFloatAboveZero(dist) && isFloatLessThan(dist, intersectParam)) { 
-         return true;
-      }
-   }
+__device__ bool isInShadow(const Ray &shadow, BVHTree *tree, float intersectParam) {
    return false;
+   //for (int i = 0; i < geomCount; i++) {
+   //   float dist = geomList[i]->getIntersection(shadow);
+   //   if (isFloatAboveZero(dist) && isFloatLessThan(dist, intersectParam)) { 
+   //      return true;
+   //   }
+   //}
+   //return false;
 }
 
 // Find the closest shape. The index of the intersecting object is stored in
 // retOjIdx and the t-value along the input ray is stored in retParam
 //
 // If no intersection is found, retObjIdx is set to 'kNoShapeFound'
-__device__ void getClosestIntersection(const Ray &ray, Geometry *geomList[], 
-      int geomCount, int *retObjIdx, float *retParam) {
+__device__ void getClosestIntersection(const Ray &ray, BVHTree *tree, 
+      Geometry **retObj, float *retParam) {
    float t = kMaxDist;
-   int closestShapeIdx = kNoShapeFound;
+   Geometry *closestGeom = kNoShapeFound;
 
-   for (int i = 0; i < geomCount; i++) {
-      float dist = geomList[i]->getIntersection(ray);
+   BVHNode *stack[kMaxStackSize];
+   int stackSize = 0;
+   bool justPoppedStack = false;
 
-      // If two faces are very close, this picks the face that's normal
-      // is closer to the incoming ray
-      if (isFloatEqual(t, dist)) {
-         glm::vec3 oldNorm = geomList[closestShapeIdx]->getNormalAt(ray, t);
-         glm::vec3 newNorm = geomList[i]->getNormalAt(ray, dist);
-         glm::vec3 eye = glm::normalize(-ray.d);
-         float newDot = glm::dot(eye, newNorm);
-         float oldDot = glm::dot(eye, oldNorm);
-         if (newDot > oldDot) {
-            closestShapeIdx = i;
+   BVHNode *cursor = tree->root;
+     
+   do {
+      if (stackSize >= kMaxStackSize) {
+         printf("Stack full, aborting!\n");
+         return;
+      }
+         
+      // If at a leaf
+      if (cursor->geom) {
+         float dist = cursor->geom->getIntersection(ray);
+         //If two shapes are overlapping, pick the one with the closest facing normal
+         if (isFloatEqual(t, dist)) {
+            glm::vec3 oldNorm = closestGeom->getNormalAt(ray, t);
+            glm::vec3 newNorm = cursor->geom->getNormalAt(ray, dist);
+            glm::vec3 eye = glm::normalize(-ray.d);
+            float newDot = glm::dot(eye, newNorm);
+            float oldDot = glm::dot(eye, oldNorm);
+            if (newDot > oldDot) {
+               closestGeom = cursor->geom;
+               t = dist;
+            }
+         // Otherwise, if one face is front of the current one
+         } else if (dist < t && isFloatAboveZero(dist)) {
             t = dist;
+            closestGeom = cursor->geom;
          }
+      } else if (!justPoppedStack && isFloatAboveZero(cursor->left->bb.getIntersection(ray)) && cursor->left->bb.getIntersection(ray) < t) {
+         //go left
+         stack[stackSize++] = cursor;
+         cursor = cursor->left;
+         justPoppedStack = false;
+         continue;
+      } else if (cursor->right && isFloatAboveZero(cursor->right->bb.getIntersection(ray)) && cursor->right->bb.getIntersection(ray) < t) {
+         //go right
+         cursor = cursor->right;
+         justPoppedStack = false;
+         continue;
+      }
 
-      // Otherwise, if one face is front of the current one
-      } else if (isFloatAboveZero(dist) && dist < t) {
-         closestShapeIdx = i;
+      if(stackSize > 0) {
+         // Pop the stack
+         cursor = stack[stackSize - 1]; 
+         justPoppedStack = true;
+      }
+      stackSize--;
+   } while(stackSize >= 0);
+
+   for (int planeIdx = 0; planeIdx < tree->planeListSize; planeIdx++) {
+      float dist = tree->planeList[planeIdx]->getIntersection(ray);
+      if (isFloatLessThan(dist, t) && isFloatAboveZero(dist)) {
+         closestGeom = tree->planeList[planeIdx];
          t = dist;
       }
+
    }
 
-   *retObjIdx = closestShapeIdx;
+   *retObj = closestGeom;
    *retParam = t;
 }
 
 template <int invRecLevel>
 __device__ glm::vec3 getReflection(glm::vec3 point, glm::vec3 normal, glm::vec3 eyeVec, 
-   Geometry *geomList[], int geomCount, Light *lights[], int lightCount, 
-   Shader **shader) {
+   BVHTree *tree, Light *lights[], int lightCount, Shader **shader) {
 
    Ray reflectRay(point, 2.0f * glm::dot(normal, eyeVec) * normal - eyeVec);
-   int objIdx;
+   reflectRay.o += 10 * EPSILON * reflectRay.d;
+   Geometry *closestGeom;
    float t;
 
-   getClosestIntersection(reflectRay, geomList, geomCount, &objIdx, &t);
-   if (objIdx != kNoShapeFound) {
-      return shadeObject<invRecLevel>(geomList, geomCount, 
+   getClosestIntersection(reflectRay, tree, &closestGeom, &t);
+   if (closestGeom != kNoShapeFound) {
+      return shadeObject<invRecLevel>(tree, 
             lights, lightCount,
-            objIdx, t,
+            closestGeom, t,
             reflectRay, shader);
    } 
    return vec3(0.0f);
 }
 
+template <>
+__device__ glm::vec3 getReflection<0>(glm::vec3 point, glm::vec3 normal, glm::vec3 eyeVec, 
+   BVHTree *tree, Light *lights[], int lightCount, 
+   Shader **shader) { return vec3(0.0f); }
+
 template <int invRecLevel>
 __device__ glm::vec3 getRefraction(glm::vec3 point, glm::vec3 normal, float ior, glm::vec3 eyeVec, 
-   Geometry *geomList[], int geomCount, Light *lights[], int lightCount, 
-   Shader **shader) {
+   BVHTree *tree, Light *lights[], int lightCount, Shader **shader) {
 
    float n1, n2;
    vec3 refrNorm;
@@ -112,13 +155,14 @@ __device__ glm::vec3 getRefraction(glm::vec3 point, glm::vec3 normal, float ior,
    if (discriminant > 0.0f) {
       vec3 refracDir = nr * (d - refrNorm * dDotN) - refrNorm * sqrtf(discriminant);
       Ray refracRay(point, refracDir);
-      int objIdx;
+      refracRay.o += 10 * EPSILON * refracRay.d;
+      Geometry *closestGeom;
       float t;
-      getClosestIntersection(refracRay, geomList, geomCount, &objIdx, &t);
-      if (objIdx != kNoShapeFound) {
-         return shadeObject<invRecLevel>(geomList, geomCount, 
+      getClosestIntersection(refracRay, tree, &closestGeom, &t);
+      if (closestGeom != kNoShapeFound) {
+         return shadeObject<invRecLevel>(tree,
                lights, lightCount,
-               objIdx, t,
+               closestGeom, t,
                refracRay, shader);
       }
    } 
@@ -127,33 +171,28 @@ __device__ glm::vec3 getRefraction(glm::vec3 point, glm::vec3 normal, float ior,
 
 template <>
 __device__ glm::vec3 getRefraction<0>(glm::vec3 point, glm::vec3 normal, float ior, glm::vec3 eyeVec, 
-   Geometry *geomList[], int geomCount, Light *lights[], int lightCount, 
+   BVHTree *tree, Light *lights[], int lightCount, 
    Shader **shader) { return vec3(0.0f); }
 
-template <>
-__device__ glm::vec3 getReflection<0>(glm::vec3 point, glm::vec3 normal, glm::vec3 eyeVec, 
-   Geometry *geomList[], int geomCount, Light *lights[], int lightCount, 
-   Shader **shader) { return vec3(0.0f); }
 
 //Note: The ray parameter must stay as a copy (not a reference) 
 template <int invRecLevel> 
-__device__ vec3 shadeObject(Geometry *geomList[], int geomCount, 
-      Light *lights[], int lightCount, int objIdx, 
+__device__ vec3 shadeObject(BVHTree *tree, 
+      Light *lights[], int lightCount, Geometry* geom, 
       float intParam, Ray ray, Shader **shader) {
 
    glm::vec3 intersectPoint = ray.getPoint(intParam);
-   Material m = geomList[objIdx]->getMaterial();
-   vec3 normal = geomList[objIdx]->getNormalAt(ray, intParam);
+   Material m = geom->getMaterial();
+   vec3 normal = geom->getNormalAt(ray, intParam);
    vec3 eyeVec = glm::normalize(-ray.d);
    vec3 totalLight(0.0f);
 
    for(int lightIdx = 0; lightIdx < lightCount; lightIdx++) {
-      vec3 light = lights[lightIdx]->getLightAtPoint(geomList, geomCount, 
-                                                     objIdx, intersectPoint);
+      vec3 light = lights[lightIdx]->getLightAtPoint(geom, intersectPoint);
       vec3 lightDir = lights[lightIdx]->getLightDir(intersectPoint);
       Ray shadow = lights[lightIdx]->getShadowFeeler(intersectPoint);
-      float intersectParam = geomList[objIdx]->getIntersection(shadow);
-      bool inShadow = isInShadow(shadow, geomList, geomCount, intersectParam); 
+      float intersectParam = geom->getIntersection(shadow);
+      bool inShadow = isInShadow(shadow, tree, intersectParam); 
 
       totalLight += (*shader)->shade(m.clr, m.amb, m.dif, m.spec, m.rough, 
             eyeVec, lightDir, light, normal, 
@@ -163,13 +202,13 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
    vec3 reflectedLight(0.0f);
    if (m.refl > 0.0f && invRecLevel - 1 > 0) {
       reflectedLight = getReflection<invRecLevel - 1>(intersectPoint, 
-         normal, eyeVec, geomList, geomCount, lights, lightCount, shader);
+         normal, eyeVec, tree, lights, lightCount, shader);
    }
 
    vec3 refractedLight(0.0f);
    if (m.refr > 0.0f && invRecLevel - 1 > 0) {
       refractedLight = getRefraction<invRecLevel - 1>(intersectPoint, 
-         normal, m.ior, eyeVec, geomList, geomCount, lights, lightCount, shader);
+         normal, m.ior, eyeVec, tree, lights, lightCount, shader);
 
    }
 
@@ -178,11 +217,11 @@ __device__ vec3 shadeObject(Geometry *geomList[], int geomCount,
 }
 
 template <> 
-__device__ vec3 shadeObject<0>(Geometry *geomList[], int geomCount, 
+__device__ vec3 shadeObject<0>(BVHTree *tree, 
       Light *lights[], int lightCount, int objIdx, 
       float intParam, Ray ray, Shader **shader) { return vec3(0.0f); }
 
-__global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *sphereTks, int numSpheres,
+__global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *lights[], TKSphere *sphereTks, int numSpheres,
       TKPlane *planeTks, int numPlanes, TKTriangle *triangleTks, int numTris, TKBox *boxTks, int numBoxes,
       TKSmoothTriangle *smthTriTks, int numSmthTris, TKPointLight *pLightTks, int numPointLights, 
       Shader **shader, ShadingType stype) {
@@ -217,7 +256,7 @@ __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *spher
          const TKPlane &p = planeTks[i];
          const TKFinish &f = p.mod.fin;
          Material m(p.mod.pig.clr, p.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
-         geomList[geomIdx++] = new Plane(p.d, p.n, m, p.mod.trans, p.mod.invTrans);
+         planeList[i] = new Plane(p.d, p.n, m, p.mod.trans, p.mod.invTrans);
       }
 
       for (int i = 0; i < numTris; i++) {
@@ -252,32 +291,49 @@ __global__ void initScene(Geometry *geomList[], Light *lights[], TKSphere *spher
    }
 }
 
-__device__ void sortGeometry(Geometry *geomList[], int start, int end) {
-   return;
+__device__ inline void cudaSort(Geometry *list[], int end, int axis) {
+   bool swapMade = false;
+   for (int i = 0; i < end; i++) {
+      for (int j = 0; j < end - i - 1; j++) {
+         if (list[j]->getCenter()[axis] > list[j+1]->getCenter()[axis]) {
+            SWAP(list[j], list[j+1]);
+            swapMade = true;
+         }
+      }
+      if (!swapMade) break;
+      swapMade = false;
+   }
 }
 
-__global__ void createBVH(Geometry *geomList[], int geomCount, BVHNode *root) {
+__global__ void createBVH(Geometry *geomList[], int geomCount, Plane *planeList[], int planeCount, BVHTree *tree) {
+   //Change this back to static memory once I get things working
    BVHStackEntry stack[kMaxStackSize];
-   int stackSize = 0;
+   tree->root = new BVHNode();
+   tree->planeList = planeList;
+   tree->planeListSize = planeCount;
 
-   BVHNode *cursor = root;
+   BVHNode *cursor = tree->root;
    Geometry **arr = geomList;
    int listSize = geomCount;
    int axis = kXAxis;
+   int stackSize = 0;
+
+   // Call the BVHNode constructor
 
    do {
-      if (stackSize == kMaxStackSize) {
+      if (stackSize >= kMaxStackSize) {
          printf("Stack completely full, aborting");
          return;
       }
 
       if (listSize == 1) {
          cursor->left = new BVHNode(arr[0]);
-         //TODO Make bounding box
+         // TODO this is creating a bounding box around a bounding box around 1 item
+         cursor->bb = cursor->left->bb;
       } else if (listSize == 2) {
          cursor->left = new BVHNode(arr[0]);
          cursor->right = new BVHNode(arr[1]);
-         //TODO make a combined bounding box
+         cursor->bb = combineBoundingBox(cursor->left->bb, cursor->right->bb);
       } else {
          // If the leftside is empty, recursively create that first
          if (!cursor->left) {
@@ -286,10 +342,10 @@ __global__ void createBVH(Geometry *geomList[], int geomCount, BVHNode *root) {
 
             stack[stackSize++] = BVHStackEntry(arr, cursor, listSize, axis);
 
-            // Recurse down the leftside
             cursor = cursor->left;
             listSize = listSize / 2;
             axis = (axis + 1) % kAxisNum;
+            continue;
          // Otherwise make the rightside
          } else if (!cursor->right) {
             cursor->right = new BVHNode();
@@ -300,20 +356,22 @@ __global__ void createBVH(Geometry *geomList[], int geomCount, BVHNode *root) {
             arr = arr + listSize / 2;
             listSize = (listSize - 1) / 2 + 1;
             axis = (axis + 1) % kAxisNum;
+            continue;
          } else {
-            //TODO Combine the bounding box of both left and right
+            cursor->bb = combineBoundingBox(cursor->left->bb, cursor->right->bb);
          }
 
       }
-      
-      // Pop the stack
-      cursor = stack[stackSize - 1].cursor;
-      listSize = stack[stackSize - 1].listSize;
-      arr = stack[stackSize - 1].arr;
-      axis = stack[stackSize - 1].axis;
-      stackSize--;
-      
-   } while (stackSize > 0);
+
+      if (stackSize > 0) {
+         // Pop the stack
+         cursor = stack[stackSize - 1].cursor;
+         listSize = stack[stackSize - 1].listSize;
+         arr = stack[stackSize - 1].arr;
+         axis = stack[stackSize - 1].axis;
+      }
+      stackSize--; 
+   } while (stackSize >= 0); 
 }
 
 __global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightList[], int lightCount, Shader **shader) {
@@ -332,7 +390,7 @@ __global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightLis
 }
 
 __global__ void rayTrace(int resWidth, int resHeight, Camera cam,
-      Geometry *geomList[], int geomCount, Light *lights[], int lightCount,  
+      BVHTree *tree, Light *lights[], int lightCount,  
       vec3 output[], Shader **shader) {
 
    int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -355,12 +413,12 @@ __global__ void rayTrace(int resWidth, int resHeight, Camera cam,
    Ray ray(rPos, rDir);
 
    float t;
-   int closestShapeIdx;
-   getClosestIntersection(ray, geomList, geomCount, &closestShapeIdx, &t);
+   Geometry *closestGeom;
+   getClosestIntersection(ray, tree, &closestGeom, &t);
 
-   if (closestShapeIdx != kNoShapeFound) {
-      vec3 totalColor = shadeObject<kMaxRecurse>(geomList, geomCount, lights, lightCount, 
-            closestShapeIdx, t, ray, shader);
+   if (closestGeom != kNoShapeFound) {
+      vec3 totalColor = shadeObject<kMaxRecurse>(tree, lights, lightCount, 
+            closestGeom, t, ray, shader);
 
       output[index] = vec3(clamp(totalColor.x, 0, 1), 
                            clamp(totalColor.y, 0, 1), 
@@ -394,8 +452,9 @@ __global__ void averageBuffer(int resWidth, int resHeight, int sampleCountSqrRoo
    output[outputIndex] = clr; 
 }
 
-void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightList, 
-      int *retGeometryCount, int *retLightCount, Shader **dShader, ShadingType stype) {
+void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneList, 
+      Light ***dLightList, int *retGeometryCount, int *retPlaneCount,
+      int *retLightCount, Shader **dShader, ShadingType stype) {
    int geometryCount = 0;
    int lightCount = 0;
 
@@ -420,7 +479,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightL
       HANDLE_ERROR(cudaMalloc(&dPlaneTokens, sizeof(TKPlane) * planeCount));
       HANDLE_ERROR(cudaMemcpy(dPlaneTokens, &data->planes[0],
                sizeof(TKPlane) * planeCount, cudaMemcpyHostToDevice));
-      geometryCount += planeCount;
+      *retPlaneCount = planeCount;
    }
 
    int triangleCount = data->triangles.size();
@@ -457,10 +516,11 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Light ***dLightL
    }
 
    HANDLE_ERROR(cudaMalloc(dGeomList, sizeof(Geometry *) * geometryCount));
+   HANDLE_ERROR(cudaMalloc(dPlaneList, sizeof(Plane *) * planeCount));
    HANDLE_ERROR(cudaMalloc(dLightList, sizeof(Light *) * lightCount));
 
    // Fill up GeomList and LightList with actual objects on the GPU
-   initScene<<<1, 1>>>(*dGeomList, *dLightList, dSphereTokens, sphereCount, 
+   initScene<<<1, 1>>>(*dGeomList, *dPlaneList, *dLightList, dSphereTokens, sphereCount, 
          dPlaneTokens, planeCount, dTriangleTokens, triangleCount, dBoxTokens, boxCount, 
          dSmthTriTokens, smoothTriangleCount, dPointLightTokens, pointLightCount, 
          dShader, stype);
@@ -488,15 +548,17 @@ void freeGPUScene(Geometry **dGeomList, int geomCount, Light **dLightList,
 extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width, 
       int height, uchar4 *output, int sampleCount) {
    Geometry **dGeomList; 
+   Plane **dPlaneList; 
    Light **dLightList;
    Shader **dShader;
 
    vec3 *dAntiAliasBuffer;
    uchar4 *dOutput;
 
-   BVHNode *dBvhRoot;
+   BVHTree *dBvhTree;
 
    int geometryCount;
+   int planeCount;
    int lightCount;
 
    int sqrSampleCount = sqrt(sampleCount);
@@ -513,26 +575,28 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
    HANDLE_ERROR(cudaMalloc(&dShader, sizeof(Shader*)));
    HANDLE_ERROR(cudaMalloc(&dOutput, sizeof(uchar4) * width * height));
    HANDLE_ERROR(cudaMalloc(&dAntiAliasBuffer, sizeof(vec3) * width * height * sampleCount));
-   allocateGPUScene(data, &dGeomList, &dLightList, &geometryCount, &lightCount, dShader, stype);
-
-   HANDLE_ERROR(cudaMalloc(&dBvhRoot, sizeof(BVHNode)));
-   createBVH<<<1, 1>>>(dGeomList, geometryCount, dBvhRoot);
+   allocateGPUScene(data, &dGeomList, &dPlaneList, &dLightList, &geometryCount, &planeCount, &lightCount, dShader, stype);
    cudaDeviceSynchronize();
    checkCUDAError("AllocateGPUScene failed");
+
+   HANDLE_ERROR(cudaMalloc(&dBvhTree, sizeof(BVHTree)));
+   createBVH<<<1, 1>>>(dGeomList, geometryCount, dPlaneList, planeCount, dBvhTree);
+   cudaDeviceSynchronize();
+   checkCUDAError("CreateBVH failed");
 
    int antiAliasWidth = width * sqrSampleCount;
    int antiAliasHeight = height * sqrSampleCount;
    dim3 dimBlock(kBlockWidth, kBlockWidth);
    dim3 dimGrid((antiAliasWidth - 1) / kBlockWidth + 1, (antiAliasHeight- 1) / kBlockWidth + 1);
    rayTrace<<<dimGrid, dimBlock>>>(width * sqrSampleCount, height * sqrSampleCount, camera, 
-         dGeomList, geometryCount, dLightList, lightCount, dAntiAliasBuffer, dShader);
+         dBvhTree, dLightList, lightCount, dAntiAliasBuffer, dShader);
    cudaDeviceSynchronize();
    checkCUDAError("RayTrace kernel failed");
 
    dimGrid = dim3((width - 1) / kBlockWidth + 1, (height - 1) / kBlockWidth + 1);
    averageBuffer<<<dimGrid, dimBlock>>>(width, height, sqrSampleCount, dOutput, dAntiAliasBuffer);
    cudaDeviceSynchronize();
-   checkCUDAError("RayTrace kernel failed");
+   checkCUDAError("averageBuffer kernel failed");
 
    // Clean up
    freeGPUScene(dGeomList, geometryCount, dLightList, lightCount, dShader);

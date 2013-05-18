@@ -1,35 +1,33 @@
 #include "Geometry.h"
+#include "Plane.h"
 #include "Box.h"
+#include "GeometryUtil.h"
 #include "Util.h"
 
 
 const int kXAxis = 0, kYAxis = 1, kZAxis = 2;
 const int kAxisNum = 3;
 
-__device__ inline void cudaSort(Geometry *list[], int end, int axis) {
-   bool swapMade = false;
-   for (int i = 0; i < end; i++) {
-      for (int j = 0; j < end - i; j++) {
-         if (list[j]->getCenter()[axis] > list[j+1]->getCenter()[axis]) {
-            SWAP(list[j], list[j+1]);
-            swapMade = true;
-         }
-      }
-      if (!swapMade) break;
-      swapMade = false;
-   }
-}
 
 typedef struct BVHNode {
    BVHNode *left, *right;
    Geometry *geom;
-   __device__ BVHNode() : left(NULL), right(NULL) {}
-   __device__ BVHNode(Geometry *object) : left(NULL), right(NULL), geom(object) {}
+   BoundingBox bb;
+   __device__ BVHNode() : left(NULL), right(NULL), geom(NULL) {}
+   __device__ BVHNode(Geometry *object) : left(NULL), right(NULL), geom(object) {
+      bb = geom->getBoundingBox();
+   }
 } BVHNode;
 
+typedef struct BVHTree {
+   BVHNode *root;
+   Plane **planeList;
+   int planeListSize;
+} BVHTree;
+
 typedef struct BVHStackEntry {
-   Geometry **arr;
    BVHNode *cursor;
+   Geometry **arr;
    int listSize;
    int axis;
    __device__ BVHStackEntry() {}

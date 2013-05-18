@@ -28,7 +28,7 @@ public:
    }
 
    __device__ virtual  BoundingBox getBoundingBox() const {
-      generateBoundingBox(c - glm::vec3(r), c + glm::vec3(r), trans);      
+      return generateBoundingBox(c - glm::vec3(r), c + glm::vec3(r), trans);      
    }
 
 private:

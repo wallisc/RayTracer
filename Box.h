@@ -19,7 +19,7 @@ public:
    }
 
    __device__ virtual  BoundingBox getBoundingBox() const {
-      generateBoundingBox(minP, maxP, trans);
+      return generateBoundingBox(minP, maxP, trans);
    }
 
    __device__ virtual glm::vec3 getCenter() const { 
