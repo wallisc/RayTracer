@@ -2,6 +2,7 @@
 #define UTIL_H
 
 #define EPSILON 0.0001f
+#define BIG_EPSILON 0.001f
 const float EQUAL_EPSILON = 0.01f;
 
 __device__ inline int isFloatZero(float n) {

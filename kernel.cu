@@ -114,7 +114,7 @@ __device__ glm::vec3 getReflection(glm::vec3 point, glm::vec3 normal, glm::vec3 
    BVHTree *tree, Light *lights[], int lightCount, Shader **shader) {
 
    Ray reflectRay(point, 2.0f * glm::dot(normal, eyeVec) * normal - eyeVec);
-   reflectRay.o += 10 * EPSILON * reflectRay.d;
+   reflectRay.o += BIG_EPSILON * reflectRay.d;
    Geometry *closestGeom;
    float t;
 
@@ -155,7 +155,7 @@ __device__ glm::vec3 getRefraction(glm::vec3 point, glm::vec3 normal, float ior,
    if (discriminant > 0.0f) {
       vec3 refracDir = nr * (d - refrNorm * dDotN) - refrNorm * sqrtf(discriminant);
       Ray refracRay(point, refracDir);
-      refracRay.o += 10 * EPSILON * refracRay.d;
+      refracRay.o += BIG_EPSILON * refracRay.d;
       Geometry *closestGeom;
       float t;
       getClosestIntersection(refracRay, tree, &closestGeom, &t);
@@ -291,20 +291,71 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
    }
 }
 
+typedef struct SortFrame {
+   int size;
+   Geometry **arr;
+   __device__ SortFrame(int nSize = 0, Geometry **nArr = NULL) : size(nSize), arr(nArr) {}
+} SortFrame;
+
 __device__ inline void cudaSort(Geometry *list[], int end, int axis) {
-   bool swapMade = false;
-   for (int i = 0; i < end; i++) {
-      for (int j = 0; j < end - i - 1; j++) {
-         if (list[j]->getCenter()[axis] > list[j+1]->getCenter()[axis]) {
-            SWAP(list[j], list[j+1]);
-            swapMade = true;
+   SortFrame stack[kMaxStackSize];
+   int stackSize = 0;
+   bool stackPopped = false;
+
+   int size = end;
+   Geometry **arr = list;
+   while (1) {
+      if (size == 1) {}
+      else if (size == 2) {
+         if (arr[0]->getCenter()[axis] < arr[1]->getCenter()[axis]) {
+            SWAP(arr[0], arr[1]);
+         }
+      } else {
+         if (!stackPopped) {
+            int pivot = size / 2;
+            SWAP(arr[pivot], arr[size - 1]);
+            int topOfBottom = 0;
+            for (int i = 0; i < size - 1; i++) {
+               if(arr[i] < arr[size - 1]) {
+                  SWAP(arr[i], arr[topOfBottom++]);   
+               }             }
+            stack[stackSize++] = SortFrame(size, arr); 
+
          }
       }
-      if (!swapMade) break;
-      swapMade = false;
+
+
+      if (stackSize == 0) break;
+      arr = stack[stackSize - 1].arr;
+      size = stack[stackSize - 1].size;
+      stackSize--;
+      stackPopped = true;
    }
 }
 
+__global__ void sortPieces(Geometry *geomList[], int geomCount, int div, int subDiv, int axis) {
+   int idx = blockIdx.x * threadIdx.x;
+   int size = subDiv;
+
+   if (idx > div) return;
+
+   if ((subDiv + 1) * idx > geomCount) {
+      size = geomCount - subDiv * idx;
+      if (size == 0) return;
+   }
+   cudaSort(geomList + subDiv * idx, subDiv, axis);
+}
+
+//crazy stuff
+//__global__ void createBVH(Geometry *geomList[], int geomCount, Plane *planeList[], int planeCount, BVHTree *tree) {
+//   //Change this back to static memory once I get things working
+//   BVHStackEntry stack[kMaxStackSize];
+//   tree->root = new BVHNode();
+//   tree->planeList = planeList;
+//   tree->planeListSize = planeCount;
+//
+//   
+//}
 __global__ void createBVH(Geometry *geomList[], int geomCount, Plane *planeList[], int planeCount, BVHTree *tree) {
    //Change this back to static memory once I get things working
    BVHStackEntry stack[kMaxStackSize];
@@ -584,6 +635,21 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
    cudaDeviceSynchronize();
    checkCUDAError("CreateBVH failed");
 
+   // Crazy stuff
+   /*int div = 2;
+   int subDivs;
+   int axis = kXAxis;
+   do {
+      subDivs = geometryCount / div;
+      dim3 dimBlock(kBlockWidth * kBlockWidth);
+      dim3 dimGrid((div - 1) / kBlockWidth + 1);
+      sortPieces<<<dimBlock, dimGrid>>>(dGeomList, geometryCount, div, subDivs, axis);
+      axis = (axis + 1) % kAxisNum;
+      
+      div *= 2;
+      subDivs = geometryCount / div;
+   } while ( subDivs > 2);*/
+
    int antiAliasWidth = width * sqrSampleCount;
    int antiAliasHeight = height * sqrSampleCount;
    dim3 dimBlock(kBlockWidth, kBlockWidth);
@@ -599,7 +665,7 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
    checkCUDAError("averageBuffer kernel failed");
 
    // Clean up
-   freeGPUScene(dGeomList, geometryCount, dLightList, lightCount, dShader);
+   //freeGPUScene(dGeomList, geometryCount, dLightList, lightCount, dShader);
    HANDLE_ERROR(cudaMemcpy(output, dOutput, 
             sizeof(uchar4) * width * height, cudaMemcpyDeviceToHost));
    HANDLE_ERROR(cudaFree(dOutput));
