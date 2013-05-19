@@ -24,23 +24,16 @@ using glm::vec3;
 const int kBlockWidth = 16;
 const float kMaxDist = FLT_MAX;
 
-__device__ bool isInShadow(const Ray &shadow, BVHTree *tree, float intersectParam) {
-   return false;
-   //for (int i = 0; i < geomCount; i++) {
-   //   float dist = geomList[i]->getIntersection(shadow);
-   //   if (isFloatAboveZero(dist) && isFloatLessThan(dist, intersectParam)) { 
-   //      return true;
-   //   }
-   //}
-   //return false;
-}
 
 // Find the closest shape. The index of the intersecting object is stored in
 // retOjIdx and the t-value along the input ray is stored in retParam
 //
+// toBeat can be set to a float value if you want to short-circuit as soon
+// as you find an object closer than toBeat
+//
 // If no intersection is found, retObjIdx is set to 'kNoShapeFound'
 __device__ void getClosestIntersection(const Ray &ray, BVHTree *tree, 
-      Geometry **retObj, float *retParam) {
+      Geometry **retObj, float *retParam, float toBeat = -FLT_MAX) {
    float t = kMaxDist;
    Geometry *closestGeom = kNoShapeFound;
 
@@ -69,11 +62,21 @@ __device__ void getClosestIntersection(const Ray &ray, BVHTree *tree,
             if (newDot > oldDot) {
                closestGeom = cursor->geom;
                t = dist;
+               if (t < toBeat) {
+                  *retObj = closestGeom;
+                  *retParam = t;
+                  return;
+               }
             }
          // Otherwise, if one face is front of the current one
          } else if (dist < t && isFloatAboveZero(dist)) {
             t = dist;
             closestGeom = cursor->geom;
+            if (t < toBeat) {
+               *retObj = closestGeom;
+               *retParam = t;
+               return;
+            }
          }
       } else if (!justPoppedStack && isFloatAboveZero(cursor->left->bb.getIntersection(ray)) && cursor->left->bb.getIntersection(ray) < t) {
          //go left
@@ -107,6 +110,13 @@ __device__ void getClosestIntersection(const Ray &ray, BVHTree *tree,
 
    *retObj = closestGeom;
    *retParam = t;
+}
+
+__device__ bool isInShadow(const Ray &shadow, BVHTree *tree, float intersectParam) {
+   float closestIntersect;
+   Geometry *closestObj;
+   getClosestIntersection(shadow, tree, &closestObj, &closestIntersect, intersectParam);
+   return isFloatLessThan(closestIntersect, intersectParam);
 }
 
 template <int invRecLevel>
@@ -225,11 +235,13 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
       TKPlane *planeTks, int numPlanes, TKTriangle *triangleTks, int numTris, TKBox *boxTks, int numBoxes,
       TKSmoothTriangle *smthTriTks, int numSmthTris, TKPointLight *pLightTks, int numPointLights, 
       Shader **shader, ShadingType stype) {
-   int geomIdx = 0;
-   int lightIdx = 0;
+
+   int idx = blockIdx.x * blockDim.x + threadIdx.x;
+   int gridSize = gridDim.x * blockDim.x;
+   int geomListSize = 0;
+   int lightListSize = 0;
 
    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
-
       // Setup the shader
       switch(stype) {
       case PHONG:
@@ -242,52 +254,56 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
          printf("Improper shading type specified\n");
          break;
       }
-
-      // Add all the geometry
-      for (int i = 0; i < numSpheres; i++) {
-         const TKSphere &s = sphereTks[i];
-         const TKFinish f = s.mod.fin;
-         Material m(s.mod.pig.clr, s.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
-         geomList[geomIdx++] = new Sphere(s.p, s.r, m, s.mod.trans, s.mod.invTrans);
-      }
-
-      for (int i = 0; i < numPlanes; i++) {
-         const TKPlane &p = planeTks[i];
-         const TKFinish &f = p.mod.fin;
-         Material m(p.mod.pig.clr, p.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
-         planeList[i] = new Plane(p.d, p.n, m, p.mod.trans, p.mod.invTrans);
-      }
-
-      for (int i = 0; i < numTris; i++) {
-         const TKTriangle &t = triangleTks[i];
-         const TKFinish f = t.mod.fin;
-         Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
-         geomList[geomIdx++] = new Triangle(t.p1, t.p2, t.p3, m, t.mod.trans, 
-               t.mod.invTrans);
-      }
-
-      for (int i = 0; i < numBoxes; i++) {
-         const TKBox &b = boxTks[i];
-         const TKFinish f = b.mod.fin;
-         Material m(b.mod.pig.clr, b.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
-         geomList[geomIdx++] = new Box(b.p1, b.p2, m, b.mod.trans, b.mod.invTrans);
-      }
-
-      for (int i = 0; i < numSmthTris; i++) {
-         const TKSmoothTriangle &t = smthTriTks[i];
-         const TKFinish f = t.mod.fin;
-         Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
-         geomList[geomIdx++] = new SmoothTriangle(t.p1, t.p2, t.p3, t.n1, t.n2, t.n3, 
-               m, t.mod.trans, t.mod.invTrans);
-
-      }
-
-      // Add all the lights
-      for (int i = 0; i < numPointLights; i++) {
-         TKPointLight &p = pLightTks[i];
-         lights[lightIdx++] = new PointLight(p.pos, p.clr);
-      }
    }
+
+   for (int planeIdx = idx; planeIdx < numPlanes; planeIdx += gridSize) {
+      const TKPlane &p = planeTks[planeIdx];
+      const TKFinish &f = p.mod.fin;
+      Material m(p.mod.pig.clr, p.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+      planeList[planeIdx] = new Plane(p.d, p.n, m, p.mod.trans, p.mod.invTrans);
+   }
+
+   // Add all the geometry
+   for (int sphereIdx = idx; sphereIdx < numSpheres; sphereIdx += gridSize) {
+      const TKSphere &s = sphereTks[sphereIdx];
+      const TKFinish f = s.mod.fin;
+      Material m(s.mod.pig.clr, s.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+      geomList[sphereIdx + geomListSize] = new Sphere(s.p, s.r, m, s.mod.trans, s.mod.invTrans);
+   }
+   geomListSize += numSpheres;
+
+   for (int triIdx = idx; triIdx < numTris; triIdx += gridSize) {
+      const TKTriangle &t = triangleTks[triIdx];
+      const TKFinish f = t.mod.fin;
+      Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+      geomList[triIdx + geomListSize] = new Triangle(t.p1, t.p2, t.p3, m, t.mod.trans, 
+            t.mod.invTrans);
+   }
+   geomListSize += numTris;
+
+   for (int boxIdx = idx; boxIdx < numBoxes; boxIdx += gridSize) {
+      const TKBox &b = boxTks[boxIdx];
+      const TKFinish f = b.mod.fin;
+      Material m(b.mod.pig.clr, b.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+      geomList[boxIdx + geomListSize] = new Box(b.p1, b.p2, m, b.mod.trans, b.mod.invTrans);
+   }
+   geomListSize += numBoxes;
+
+   for (int smTriIdx = idx; smTriIdx < numSmthTris; smTriIdx += gridSize) {
+      const TKSmoothTriangle &t = smthTriTks[smTriIdx];
+      const TKFinish f = t.mod.fin;
+      Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+      geomList[smTriIdx + geomListSize] = new SmoothTriangle(t.p1, t.p2, t.p3, t.n1, t.n2, t.n3, 
+            m, t.mod.trans, t.mod.invTrans);
+
+   }
+   geomListSize += numSmthTris;
+
+   for (int pointLightIdx = idx; pointLightIdx < numPointLights; pointLightIdx += gridSize) {
+      TKPointLight &p = pLightTks[pointLightIdx];
+      lights[pointLightIdx + lightListSize] = new PointLight(p.pos, p.clr);
+   }
+   lightListSize += numPointLights;
 }
 
 typedef struct SortFrame {
@@ -491,6 +507,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
       int *retLightCount, Shader **dShader, ShadingType stype) {
    int geometryCount = 0;
    int lightCount = 0;
+   int biggestListSize = 0;
 
    TKSphere *dSphereTokens = NULL;
    TKPlane *dPlaneTokens = NULL;
@@ -506,6 +523,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
       HANDLE_ERROR(cudaMemcpy(dSphereTokens, &data->spheres[0], 
                sizeof(TKSphere) * sphereCount, cudaMemcpyHostToDevice));
       geometryCount += sphereCount;
+      if (sphereCount > biggestListSize) biggestListSize = sphereCount;
    }
 
    int planeCount = data->planes.size();
@@ -514,6 +532,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
       HANDLE_ERROR(cudaMemcpy(dPlaneTokens, &data->planes[0],
                sizeof(TKPlane) * planeCount, cudaMemcpyHostToDevice));
       *retPlaneCount = planeCount;
+      if (planeCount > biggestListSize) biggestListSize = planeCount;
    }
 
    int triangleCount = data->triangles.size();
@@ -522,6 +541,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
       HANDLE_ERROR(cudaMemcpy(dTriangleTokens, &data->triangles[0], 
                sizeof(TKTriangle) * triangleCount, cudaMemcpyHostToDevice));
       geometryCount += triangleCount;
+      if (triangleCount > biggestListSize) biggestListSize = triangleCount;
    }
 
    int boxCount = data->boxes.size();
@@ -530,6 +550,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
       HANDLE_ERROR(cudaMemcpy(dBoxTokens, &data->boxes[0],
                sizeof(TKBox) * boxCount, cudaMemcpyHostToDevice));
       geometryCount += boxCount;
+      if (boxCount > biggestListSize) biggestListSize = boxCount;
    }
 
    int smoothTriangleCount = data->smoothTriangles.size();
@@ -538,6 +559,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
       HANDLE_ERROR(cudaMemcpy(dSmthTriTokens, &data->smoothTriangles[0],
                sizeof(TKSmoothTriangle) * smoothTriangleCount, cudaMemcpyHostToDevice));
       geometryCount += smoothTriangleCount;
+      if (smoothTriangleCount > biggestListSize) biggestListSize = smoothTriangleCount;
    }
 
    int pointLightCount = data->pointLights.size();
@@ -547,14 +569,17 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
       HANDLE_ERROR(cudaMemcpy(dPointLightTokens, &data->pointLights[0],
                sizeof(TKPointLight) * pointLightCount, cudaMemcpyHostToDevice));
       lightCount += pointLightCount;
+      if (pointLightCount > biggestListSize) biggestListSize = pointLightCount;
    }
 
    HANDLE_ERROR(cudaMalloc(dGeomList, sizeof(Geometry *) * geometryCount));
    HANDLE_ERROR(cudaMalloc(dPlaneList, sizeof(Plane *) * planeCount));
    HANDLE_ERROR(cudaMalloc(dLightList, sizeof(Light *) * lightCount));
 
+   int blockSize = kBlockWidth * kBlockWidth;
+   int gridSize = (biggestListSize - 1) / blockSize + 1;
    // Fill up GeomList and LightList with actual objects on the GPU
-   initScene<<<1, 1>>>(*dGeomList, *dPlaneList, *dLightList, dSphereTokens, sphereCount, 
+   initScene<<<gridSize, blockSize>>>(*dGeomList, *dPlaneList, *dLightList, dSphereTokens, sphereCount, 
          dPlaneTokens, planeCount, dTriangleTokens, triangleCount, dBoxTokens, boxCount, 
          dSmthTriTokens, smoothTriangleCount, dPointLightTokens, pointLightCount, 
          dShader, stype);
