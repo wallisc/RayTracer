@@ -1,6 +1,6 @@
 CC=nvcc
 LD=nvcc
-CUDAFLAGS= -O3 -arch=sm_20 -Xptxas -dlcm=ca
+CUDAFLAGS= -O3 -arch=sm_20 -Xptxas -dlcm=ca 
 #-prec-div=false -prec-sqrt=false -use_fast_math
 ALL= cudaError.h kernel.h Plane.h Shader.h Geometry.h Light.h PointLight.h Ray.h 
 ALL+= Sphere.h TokenData.h Material.h Util.h PhongShader.h CookTorranceShader.h 

@@ -5,8 +5,6 @@
 #include "Util.h"
 
 
-const int kXAxis = 0, kYAxis = 1, kZAxis = 2;
-const int kAxisNum = 3;
 
 
 typedef struct BVHNode {

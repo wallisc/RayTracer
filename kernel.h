@@ -9,11 +9,15 @@
 #include "Shader.h"
 #include "bvh.h"
 
-const int kMaxStackSize = 200;
+const int kMaxStackSize = 300;
+const int kInsertionSortCutoff = 10;
 
 typedef enum {PHONG, COOK_TORRANCE} ShadingType;
-const int kMaxRecurse = 6;
+const int kMaxRecurse = 1;
 const float kAirIOR = 1.0f;
+
+const int kXAxis = 0, kYAxis = 1, kZAxis = 2;
+const int kAxisNum = 3;
 
 extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width, 
                               int height, uchar4 *output, int sampleCount);

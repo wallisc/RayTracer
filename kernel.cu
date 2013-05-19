@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <vector>
+#include <map>
 #include <stdio.h>
 #include <float.h>
 
@@ -20,6 +22,8 @@
 #define kNoShapeFound NULL
 
 using glm::vec3;
+using std::vector;
+using std::pair;
 
 const int kBlockWidth = 16;
 const float kMaxDist = FLT_MAX;
@@ -309,33 +313,75 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
 typedef struct SortFrame {
    int size;
    Geometry **arr;
-   __device__ SortFrame(int nSize = 0, Geometry **nArr = NULL) : size(nSize), arr(nArr) {}
+   int topOfBottom;
+   __device__ SortFrame(int nTopOfBottom = 0, int nSize = 0, Geometry **nArr = NULL) 
+      : size(nSize), topOfBottom(nTopOfBottom), arr(nArr) {}
 } SortFrame;
 
-__device__ inline void cudaSort(Geometry *list[], int end, int axis) {
+__device__ int pickPivot(Geometry *list[], int size, int axis) {
+   int first = 0, middle = size / 2, last = size -1;
+   float firstVal = list[first]->getCenter()[axis];
+   float midVal = list[middle]->getCenter()[axis]; 
+   float lastVal = list[last]->getCenter()[axis];
+
+   if (firstVal < lastVal) {
+      if (midVal < lastVal) {
+         return midVal > firstVal ? middle : first;
+      } else {
+         return last;
+      }
+   } else { // if (firstVal > lastVal)
+      if (midVal < lastVal) {
+         return firstVal < midVal ? middle : first;
+      } else {
+         return last;
+      }
+   }
+}
+
+__global__ void kernelSort(Geometry *list[], int start, int end, int axis) {
    SortFrame stack[kMaxStackSize];
    int stackSize = 0;
    bool stackPopped = false;
 
-   int size = end;
-   Geometry **arr = list;
+   int size = end - start;
+   int topOfBottom;
+   Geometry **arr = list + start;
    while (1) {
-      if (size == 1) {}
-      else if (size == 2) {
-         if (arr[0]->getCenter()[axis] < arr[1]->getCenter()[axis]) {
-            SWAP(arr[0], arr[1]);
+      if (stackSize == kMaxStackSize) {
+         printf("Stack size exceeded, aborting\n");
+         return;
+      }
+      // If small enough size, do insertion sort
+      if (size < kInsertionSortCutoff) {
+         for (int i = 1; i < size; i++) {
+            int j = i;
+            Geometry *toInsert = arr[j];
+            for (; j > 0 && toInsert->getCenter()[axis] < arr[j - 1]->getCenter()[axis]; j--) {
+               arr[j] = arr[j-1];
+            }
+            arr[j] = toInsert;
          }
       } else {
          if (!stackPopped) {
-            int pivot = size / 2;
+            int pivot = pickPivot(arr, size, axis);
             SWAP(arr[pivot], arr[size - 1]);
-            int topOfBottom = 0;
+            topOfBottom = 0;
             for (int i = 0; i < size - 1; i++) {
-               if(arr[i] < arr[size - 1]) {
+               if(arr[i]->getCenter()[axis] < arr[size - 1]->getCenter()[axis]) {
                   SWAP(arr[i], arr[topOfBottom++]);   
-               }             }
-            stack[stackSize++] = SortFrame(size, arr); 
-
+               }             
+            }
+            SWAP(arr[topOfBottom++], arr[size - 1]);   
+            stack[stackSize++] = SortFrame(topOfBottom, size, arr); 
+            size = topOfBottom;
+            stackPopped = false;
+            continue;
+         } else {
+            arr += topOfBottom;
+            size -= topOfBottom;
+            stackPopped = false;
+            continue;
          }
       }
 
@@ -343,22 +389,14 @@ __device__ inline void cudaSort(Geometry *list[], int end, int axis) {
       if (stackSize == 0) break;
       arr = stack[stackSize - 1].arr;
       size = stack[stackSize - 1].size;
+      topOfBottom = stack[stackSize - 1].topOfBottom;
       stackSize--;
       stackPopped = true;
    }
 }
 
-__global__ void sortPieces(Geometry *geomList[], int geomCount, int div, int subDiv, int axis) {
-   int idx = blockIdx.x * threadIdx.x;
-   int size = subDiv;
-
-   if (idx > div) return;
-
-   if ((subDiv + 1) * idx > geomCount) {
-      size = geomCount - subDiv * idx;
-      if (size == 0) return;
-   }
-   cudaSort(geomList + subDiv * idx, subDiv, axis);
+void cudaSort(Geometry *geomList[], int start, int end, int axis) {
+   kernelSort<<<1, 1>>>(geomList, start, end, axis);
 }
 
 __global__ void createBVHTree(BVHTree *tree, BVHNode *nodes[], Plane *planeList[], int planeCount) {
@@ -400,6 +438,36 @@ __global__ void setupBVHNodes(Geometry *geomList[], int geomCount, BVHNode *node
    } 
 }
 void formBVH(Geometry *dGeomList[], int geomCount, Plane *planeList[], int planeCount, BVHTree *dTree) {
+
+   vector<pair<int, int> > *oldQueue = new vector<pair<int, int> >();
+   vector<pair<int, int> > *newQueue = new vector<pair<int, int> >();
+
+   int start = 0, end;
+   int axis = kXAxis;
+   oldQueue->push_back(pair<int, int>(0, geomCount));
+   while(oldQueue->size() > 0) {
+      while (oldQueue->size() > 0) {
+         start = oldQueue->back().first;
+         end = oldQueue->back().second;
+         oldQueue->pop_back();
+
+         if (end - start > 2) {
+            cudaSort(dGeomList, start, end, axis);
+
+            int closestPow2 = 2;
+            while (closestPow2 * 2 < end - start) closestPow2 *= 2;
+
+            newQueue->push_back(pair<int, int>(start, closestPow2));
+            newQueue->push_back(pair<int, int>(start + closestPow2, end));
+         }       
+      }
+      cudaDeviceSynchronize();
+      checkCUDAError("kernelSort failed");
+
+      SWAP(newQueue, oldQueue);
+      axis = (axis + 1) % kAxisNum;
+   }
+
    BVHNode **dBuffer1, **dBuffer2;
    int bufferSize = (geomCount - 1) / 2 + 1;
 
@@ -531,7 +599,6 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
       HANDLE_ERROR(cudaMalloc(&dPlaneTokens, sizeof(TKPlane) * planeCount));
       HANDLE_ERROR(cudaMemcpy(dPlaneTokens, &data->planes[0],
                sizeof(TKPlane) * planeCount, cudaMemcpyHostToDevice));
-      *retPlaneCount = planeCount;
       if (planeCount > biggestListSize) biggestListSize = planeCount;
    }
 
@@ -596,6 +663,7 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
 
    *retGeometryCount = geometryCount;
    *retLightCount = lightCount;
+   *retPlaneCount = planeCount;
 }
 
 void freeGPUScene(Geometry **dGeomList, int geomCount, Light **dLightList, 
@@ -658,9 +726,8 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
    cudaDeviceSynchronize();
    checkCUDAError("averageBuffer kernel failed");
 
-   // Clean up
+   // Clean up - No long freeing memory since it leads to 10 seconds of overhead
    //freeGPUScene(dGeomList, geometryCount, dLightList, lightCount, dShader);
    HANDLE_ERROR(cudaMemcpy(output, dOutput, 
             sizeof(uchar4) * width * height, cudaMemcpyDeviceToHost));
-   HANDLE_ERROR(cudaFree(dOutput));
 }
