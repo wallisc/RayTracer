@@ -42,7 +42,7 @@ __device__ inline float mymax(float x, float y) {
 }
 
 template <class T>
-__device__ inline void SWAP(T &a, T &b) {
+__host__ __device__ inline void SWAP(T &a, T &b) {
    T temp = a; a = b; b = temp;
 }
 

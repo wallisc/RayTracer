@@ -228,7 +228,6 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
    int geomIdx = 0;
    int lightIdx = 0;
 
-   // This should really only be run with one thread and block anyways, but this is a safety check
    if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
 
       // Setup the shader
@@ -346,83 +345,67 @@ __global__ void sortPieces(Geometry *geomList[], int geomCount, int div, int sub
    cudaSort(geomList + subDiv * idx, subDiv, axis);
 }
 
-//crazy stuff
-//__global__ void createBVH(Geometry *geomList[], int geomCount, Plane *planeList[], int planeCount, BVHTree *tree) {
-//   //Change this back to static memory once I get things working
-//   BVHStackEntry stack[kMaxStackSize];
-//   tree->root = new BVHNode();
-//   tree->planeList = planeList;
-//   tree->planeListSize = planeCount;
-//
-//   
-//}
-__global__ void createBVH(Geometry *geomList[], int geomCount, Plane *planeList[], int planeCount, BVHTree *tree) {
-   //Change this back to static memory once I get things working
-   BVHStackEntry stack[kMaxStackSize];
-   tree->root = new BVHNode();
+__global__ void createBVHTree(BVHTree *tree, BVHNode *nodes[], Plane *planeList[], int planeCount) {
+   tree->root = nodes[0];
    tree->planeList = planeList;
    tree->planeListSize = planeCount;
+}
 
-   BVHNode *cursor = tree->root;
-   Geometry **arr = geomList;
-   int listSize = geomCount;
-   int axis = kXAxis;
-   int stackSize = 0;
+__global__ void convergeBVHNodes(BVHNode *oldBuffer[], BVHNode *newBuffer[], int bufferSize, int nodesLeft) {
+   int idx = blockIdx.x * blockDim.x + threadIdx.x;
+   
+   if (idx >= bufferSize) return;
+   newBuffer[idx] = NULL;
 
-   // Call the BVHNode constructor
+   if (idx * 2 >= bufferSize) return;
 
-   do {
-      if (stackSize >= kMaxStackSize) {
-         printf("Stack completely full, aborting");
-         return;
-      }
+   if (idx * 2 + 1 < nodesLeft) {
+      newBuffer[idx] = new BVHNode();
+      newBuffer[idx]->left = oldBuffer[idx * 2];
+      newBuffer[idx]->right = oldBuffer[idx * 2 + 1];
+      newBuffer[idx]->bb = combineBoundingBox(newBuffer[idx]->left->bb, newBuffer[idx]->right->bb);
+      BoundingBox bb = newBuffer[idx]->bb;
+   } else if (idx * 2 < nodesLeft) {
+      newBuffer[idx] = oldBuffer[idx * 2];       
+   } 
+}
 
-      if (listSize == 1) {
-         cursor->left = new BVHNode(arr[0]);
-         // TODO this is creating a bounding box around a bounding box around 1 item
-         cursor->bb = cursor->left->bb;
-      } else if (listSize == 2) {
-         cursor->left = new BVHNode(arr[0]);
-         cursor->right = new BVHNode(arr[1]);
-         cursor->bb = combineBoundingBox(cursor->left->bb, cursor->right->bb);
-      } else {
-         // If the leftside is empty, recursively create that first
-         if (!cursor->left) {
-            cudaSort(arr, listSize, axis);
-            cursor->left = new BVHNode();
+__global__ void setupBVHNodes(Geometry *geomList[], int geomCount, BVHNode *nodeBuffer[]) {
+   int idx = blockIdx.x * blockDim.x + threadIdx.x;
+   if (idx * 2 >= geomCount) return;
 
-            stack[stackSize++] = BVHStackEntry(arr, cursor, listSize, axis);
+   if (idx * 2 + 1 < geomCount) {
+      nodeBuffer[idx] = new BVHNode();
+      nodeBuffer[idx]->left = new BVHNode(geomList[idx * 2]);
+      nodeBuffer[idx]->right = new BVHNode(geomList[idx * 2 + 1]);
+      nodeBuffer[idx]->bb = combineBoundingBox(nodeBuffer[idx]->left->bb, nodeBuffer[idx]->right->bb);
+   } else {
+      nodeBuffer[idx] = new BVHNode(geomList[idx * 2]);       
+   } 
+}
+void formBVH(Geometry *dGeomList[], int geomCount, Plane *planeList[], int planeCount, BVHTree *dTree) {
+   BVHNode **dBuffer1, **dBuffer2;
+   int bufferSize = (geomCount - 1) / 2 + 1;
 
-            cursor = cursor->left;
-            listSize = listSize / 2;
-            axis = (axis + 1) % kAxisNum;
-            continue;
-         // Otherwise make the rightside
-         } else if (!cursor->right) {
-            cursor->right = new BVHNode();
+   HANDLE_ERROR(cudaMalloc(&dBuffer1, sizeof(BVHNode *) * bufferSize));
+   HANDLE_ERROR(cudaMalloc(&dBuffer2, sizeof(BVHNode *) * bufferSize));
 
-            stack[stackSize++] = BVHStackEntry(arr, cursor, listSize, axis);
+   // Might be able to do 32 x 32 here
+   int blockSize = kBlockWidth * kBlockWidth;
+   int gridSize = (bufferSize - 1) / blockSize + 1;
+   setupBVHNodes<<<gridSize, blockSize>>>(dGeomList, geomCount, dBuffer1);
+   cudaDeviceSynchronize();
+   checkCUDAError("setupBVHNodes failed");
 
-            cursor = cursor->right;
-            arr = arr + listSize / 2;
-            listSize = (listSize - 1) / 2 + 1;
-            axis = (axis + 1) % kAxisNum;
-            continue;
-         } else {
-            cursor->bb = combineBoundingBox(cursor->left->bb, cursor->right->bb);
-         }
+   for(int nodesLeft = bufferSize; nodesLeft > 1; nodesLeft = (nodesLeft - 1) / 2 + 1) {
+      gridSize = (nodesLeft - 1) / blockSize + 1;
+      convergeBVHNodes<<<gridSize, blockSize>>>(dBuffer1, dBuffer2, bufferSize, nodesLeft);
+      cudaDeviceSynchronize();
+      checkCUDAError("convergeBVHNodes failed");
+      SWAP(dBuffer1, dBuffer2);
+   }
 
-      }
-
-      if (stackSize > 0) {
-         // Pop the stack
-         cursor = stack[stackSize - 1].cursor;
-         listSize = stack[stackSize - 1].listSize;
-         arr = stack[stackSize - 1].arr;
-         axis = stack[stackSize - 1].axis;
-      }
-      stackSize--; 
-   } while (stackSize >= 0); 
+   createBVHTree<<<1, 1>>>(dTree, dBuffer1, planeList, planeCount);
 }
 
 __global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightList[], int lightCount, Shader **shader) {
@@ -576,6 +559,9 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
          dSmthTriTokens, smoothTriangleCount, dPointLightTokens, pointLightCount, 
          dShader, stype);
 
+   cudaDeviceSynchronize();
+   checkCUDAError("initScene failed");
+
    if (dSphereTokens) HANDLE_ERROR(cudaFree(dSphereTokens));
    if (dPlaneTokens) HANDLE_ERROR(cudaFree(dPlaneTokens));
    if (dTriangleTokens) HANDLE_ERROR(cudaFree(dTriangleTokens));
@@ -631,24 +617,7 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
    checkCUDAError("AllocateGPUScene failed");
 
    HANDLE_ERROR(cudaMalloc(&dBvhTree, sizeof(BVHTree)));
-   createBVH<<<1, 1>>>(dGeomList, geometryCount, dPlaneList, planeCount, dBvhTree);
-   cudaDeviceSynchronize();
-   checkCUDAError("CreateBVH failed");
-
-   // Crazy stuff
-   /*int div = 2;
-   int subDivs;
-   int axis = kXAxis;
-   do {
-      subDivs = geometryCount / div;
-      dim3 dimBlock(kBlockWidth * kBlockWidth);
-      dim3 dimGrid((div - 1) / kBlockWidth + 1);
-      sortPieces<<<dimBlock, dimGrid>>>(dGeomList, geometryCount, div, subDivs, axis);
-      axis = (axis + 1) % kAxisNum;
-      
-      div *= 2;
-      subDivs = geometryCount / div;
-   } while ( subDivs > 2);*/
+   formBVH(dGeomList, geometryCount, dPlaneList, planeCount, dBvhTree);
 
    int antiAliasWidth = width * sqrSampleCount;
    int antiAliasHeight = height * sqrSampleCount;
