@@ -11,6 +11,7 @@
 
 const int kMaxStackSize = 300;
 const int kInsertionSortCutoff = 10;
+const int kGimmeLotsOfMemory = 1000000 * 256;
 
 typedef enum {PHONG, COOK_TORRANCE} ShadingType;
 const int kMaxRecurse = 1;

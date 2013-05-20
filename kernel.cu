@@ -273,6 +273,7 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
       const TKFinish f = s.mod.fin;
       Material m(s.mod.pig.clr, s.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
       geomList[sphereIdx + geomListSize] = new Sphere(s.p, s.r, m, s.mod.trans, s.mod.invTrans);
+      if (!geomList[sphereIdx + geomListSize]) printf("Error at %d\n", sphereIdx + geomListSize);
    }
    geomListSize += numSpheres;
 
@@ -282,6 +283,7 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
       Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
       geomList[triIdx + geomListSize] = new Triangle(t.p1, t.p2, t.p3, m, t.mod.trans, 
             t.mod.invTrans);
+      if (!geomList[triIdx + geomListSize]) printf("Error at %d\n", triIdx + geomListSize);
    }
    geomListSize += numTris;
 
@@ -290,6 +292,7 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
       const TKFinish f = b.mod.fin;
       Material m(b.mod.pig.clr, b.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
       geomList[boxIdx + geomListSize] = new Box(b.p1, b.p2, m, b.mod.trans, b.mod.invTrans);
+      if (!geomList[boxIdx + geomListSize]) printf("Error at %d\n", boxIdx + geomListSize);
    }
    geomListSize += numBoxes;
 
@@ -299,6 +302,7 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
       Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
       geomList[smTriIdx + geomListSize] = new SmoothTriangle(t.p1, t.p2, t.p3, t.n1, t.n2, t.n3, 
             m, t.mod.trans, t.mod.invTrans);
+      if (!geomList[smTriIdx + geomListSize]) printf("Error at %d\n", smTriIdx + geomListSize);
 
    }
    geomListSize += numSmthTris;
@@ -308,6 +312,7 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
       lights[pointLightIdx + lightListSize] = new PointLight(p.pos, p.clr);
    }
    lightListSize += numPointLights;
+
 }
 
 typedef struct SortFrame {
@@ -385,7 +390,6 @@ __global__ void kernelSort(Geometry *list[], int start, int end, int axis) {
          }
       }
 
-
       if (stackSize == 0) break;
       arr = stack[stackSize - 1].arr;
       size = stack[stackSize - 1].size;
@@ -439,34 +443,34 @@ __global__ void setupBVHNodes(Geometry *geomList[], int geomCount, BVHNode *node
 }
 void formBVH(Geometry *dGeomList[], int geomCount, Plane *planeList[], int planeCount, BVHTree *dTree) {
 
-   vector<pair<int, int> > *oldQueue = new vector<pair<int, int> >();
-   vector<pair<int, int> > *newQueue = new vector<pair<int, int> >();
+   //vector<pair<int, int> > *oldQueue = new vector<pair<int, int> >();
+   //vector<pair<int, int> > *newQueue = new vector<pair<int, int> >();
 
-   int start = 0, end;
-   int axis = kXAxis;
-   oldQueue->push_back(pair<int, int>(0, geomCount));
-   while(oldQueue->size() > 0) {
-      while (oldQueue->size() > 0) {
-         start = oldQueue->back().first;
-         end = oldQueue->back().second;
-         oldQueue->pop_back();
+   //int start = 0, end;
+   //int axis = kXAxis;
+   //oldQueue->push_back(pair<int, int>(0, geomCount));
+   //while(oldQueue->size() > 0) {
+   //   while (oldQueue->size() > 0) {
+   //      start = oldQueue->back().first;
+   //      end = oldQueue->back().second;
+   //      oldQueue->pop_back();
 
-         if (end - start > 2) {
-            cudaSort(dGeomList, start, end, axis);
+   //      if (end - start > 2) {
+   //         cudaSort(dGeomList, start, end, axis);
 
-            int closestPow2 = 2;
-            while (closestPow2 * 2 < end - start) closestPow2 *= 2;
+   //         int closestPow2 = 2;
+   //         while (closestPow2 * 2 < end - start) closestPow2 *= 2;
 
-            newQueue->push_back(pair<int, int>(start, closestPow2));
-            newQueue->push_back(pair<int, int>(start + closestPow2, end));
-         }       
-      }
-      cudaDeviceSynchronize();
-      checkCUDAError("kernelSort failed");
+   //         newQueue->push_back(pair<int, int>(start, closestPow2));
+   //         newQueue->push_back(pair<int, int>(start + closestPow2, end));
+   //      }       
+   //   }
+   //   cudaDeviceSynchronize();
+   //   checkCUDAError("kernelSort failed");
 
-      SWAP(newQueue, oldQueue);
-      axis = (axis + 1) % kAxisNum;
-   }
+   //   SWAP(newQueue, oldQueue);
+   //   axis = (axis + 1) % kAxisNum;
+   //}
 
    BVHNode **dBuffer1, **dBuffer2;
    int bufferSize = (geomCount - 1) / 2 + 1;
@@ -660,7 +664,6 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
    if (dSmthTriTokens) HANDLE_ERROR(cudaFree(dSmthTriTokens));
    if (dBoxTokens) HANDLE_ERROR(cudaFree(dBoxTokens));
 
-
    *retGeometryCount = geometryCount;
    *retLightCount = lightCount;
    *retPlaneCount = planeCount;
@@ -696,6 +699,8 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
       printf("Invalid sample count: %d. Sample count for anti aliasing must have an integer square root");
       return;
    }
+
+   HANDLE_ERROR(cudaDeviceSetLimit(cudaLimitMallocHeapSize, kGimmeLotsOfMemory));
 
    TKCamera camTK = *data->camera;
    Camera camera(camTK.pos, camTK.up, camTK.right, 
