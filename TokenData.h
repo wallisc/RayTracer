@@ -4,7 +4,6 @@
 #include <vector>
 #include "glm/glm.hpp"
 
-
 typedef struct TKCamera {
    glm::vec3 pos, up, right, lookAt;
 

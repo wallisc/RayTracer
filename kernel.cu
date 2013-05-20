@@ -399,8 +399,38 @@ __global__ void kernelSort(Geometry *list[], int start, int end, int axis) {
    }
 }
 
-void cudaSort(Geometry *geomList[], int start, int end, int axis) {
+void singleThreadSort(Geometry *geomList[], int start, int end, int axis) {
    kernelSort<<<1, 1>>>(geomList, start, end, axis);
+}
+
+__global__ void merge(Geometry *oldBuffer[], Geometry *newBuffer[], int width, int size, int axis) {
+   int idx = blockIdx.x * blockDim.x + threadIdx.x;
+   int i1 = idx * width * 2;
+   int i2 = idx * width * 2 + width;
+   int div1End = min(i2, size);
+   int div2End = min(i2 + width, size); 
+
+   for(int i = i1; i < div2End; i++) {
+      if (i1 < div1End && (i2 >= div2End || oldBuffer[i1]->getCenter()[axis] < oldBuffer[i2]->getCenter()[axis])) {
+         newBuffer[i] = oldBuffer[i1++];
+      } else {
+         newBuffer[i] = oldBuffer[i2++];
+      }
+   }
+}
+
+Geometry **multiThreadSort(Geometry *buffer1[], Geometry *buffer2[], int start, int end, int axis) {
+   int size = end - start;
+   int blockSize = kBlockWidth * kBlockWidth;
+   for (int width = 1; width < end; width = 2 * width) {
+      int divs = (size - 1) / (width * 2) + 1;
+      int gridSize = (divs - 1) / blockSize + 1; 
+      merge<<<gridSize, blockSize>>>(buffer1 + start, buffer2 + start, width, size, axis);
+      cudaDeviceSynchronize();
+      SWAP(buffer1, buffer2);
+   }
+   checkCUDAError("mergeSort failed");
+   return buffer1;
 }
 
 __global__ void createBVHTree(BVHTree *tree, BVHNode *nodes[], Plane *planeList[], int planeCount) {
@@ -443,34 +473,47 @@ __global__ void setupBVHNodes(Geometry *geomList[], int geomCount, BVHNode *node
 }
 void formBVH(Geometry *dGeomList[], int geomCount, Plane *planeList[], int planeCount, BVHTree *dTree) {
 
-   //vector<pair<int, int> > *oldQueue = new vector<pair<int, int> >();
-   //vector<pair<int, int> > *newQueue = new vector<pair<int, int> >();
+   vector<pair<int, int> > *oldQueue = new vector<pair<int, int> >();
+   vector<pair<int, int> > *newQueue = new vector<pair<int, int> >();
 
-   //int start = 0, end;
-   //int axis = kXAxis;
-   //oldQueue->push_back(pair<int, int>(0, geomCount));
-   //while(oldQueue->size() > 0) {
-   //   while (oldQueue->size() > 0) {
-   //      start = oldQueue->back().first;
-   //      end = oldQueue->back().second;
-   //      oldQueue->pop_back();
+   Geometry **dBuffer;
+   HANDLE_ERROR(cudaMalloc(&dBuffer, sizeof(Geometry *) * geomCount));
 
-   //      if (end - start > 2) {
-   //         cudaSort(dGeomList, start, end, axis);
+   bool useMultiThread = true;
 
-   //         int closestPow2 = 2;
-   //         while (closestPow2 * 2 < end - start) closestPow2 *= 2;
+   int start = 0, end;
+   int axis = kXAxis;
+   oldQueue->push_back(pair<int, int>(0, geomCount));
+   while(oldQueue->size() > 0) {
+      useMultiThread = oldQueue->size() < 16 && geomCount > 1000;
+         
+      while (oldQueue->size() > 0) {
+         start = oldQueue->back().first;
+         end = oldQueue->back().second;
+         oldQueue->pop_back();
 
-   //         newQueue->push_back(pair<int, int>(start, closestPow2));
-   //         newQueue->push_back(pair<int, int>(start + closestPow2, end));
-   //      }       
-   //   }
-   //   cudaDeviceSynchronize();
-   //   checkCUDAError("kernelSort failed");
+         if (end - start > 2) {
+            if (!useMultiThread) {
+               singleThreadSort(dGeomList, start, end, axis);
+            } else {
+               if (multiThreadSort(dGeomList, dBuffer, start, end, axis) != dGeomList) SWAP(dGeomList, dBuffer);
+            }
 
-   //   SWAP(newQueue, oldQueue);
-   //   axis = (axis + 1) % kAxisNum;
-   //}
+            int closestPow2 = 2;
+            while (closestPow2 * 2 < end - start) closestPow2 *= 2;
+
+            newQueue->push_back(pair<int, int>(start, closestPow2));
+            newQueue->push_back(pair<int, int>(start + closestPow2, end));
+         }       
+      }
+      if (!useMultiThread) {
+         cudaDeviceSynchronize();
+         checkCUDAError("kernelSort failed");
+      }
+
+      SWAP(newQueue, oldQueue);
+      axis = (axis + 1) % kAxisNum;
+   }
 
    BVHNode **dBuffer1, **dBuffer2;
    int bufferSize = (geomCount - 1) / 2 + 1;
