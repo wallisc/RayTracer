@@ -14,6 +14,9 @@ POVRayParser.o: POVRayParser.cpp POVRayParser.h
 kernel.o: kernel.cu $(ALL)
 	$(CC) $(CUDAFLAGS) -c  kernel.cu  
 
+test: test.cu
+	$(CC) $(CUDAFLAGS) test.cu
+
 clean:
 	rm -rf core* *.o *.gch junk* raytrace gmon.out
 

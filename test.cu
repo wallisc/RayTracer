@@ -1,15 +1,17 @@
 #include <cuda.h>
-#include "stdio.h""
+#include <stdio.h>
+#include "cudaError.h" 
 
-__global__ void test2(){
-   printf("moo!\n");
-}
-
-__global__ void test(){
-   printf("Cows\n");
-   test2<<<2, 2>>>();
+__global__ void test() {
+   printf("Hi!\n");
 }
 
 int main() {
-   test<<<2, 2>>>();
+   cudaStream_t stream1, stream2;
+   cudaStreamCreate(&stream1);
+   cudaStreamCreate(&stream2);
+   test<<<1, 1, 0, stream1>>>();
+   test<<<1, 1, 0, stream2>>>();
+   cudaDeviceSynchronize();
+   checkCUDAError("test failed");
 }
