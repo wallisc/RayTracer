@@ -315,6 +315,94 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
 
 }
 
+typedef struct SortFrame {
+   int size;
+   Geometry **arr;
+   int topOfBottom;
+   __device__ SortFrame(int nTopOfBottom = 0, int nSize = 0, Geometry **nArr = NULL) 
+      : size(nSize), topOfBottom(nTopOfBottom), arr(nArr) {}
+} SortFrame;
+
+__device__ int pickPivot(Geometry *list[], int size, int axis) {
+   int first = 0, middle = size / 2, last = size -1;
+   float firstVal = list[first]->getCenter()[axis];
+   float midVal = list[middle]->getCenter()[axis]; 
+   float lastVal = list[last]->getCenter()[axis];
+
+   if (firstVal < lastVal) {
+      if (midVal < lastVal) {
+         return midVal > firstVal ? middle : first;
+      } else {
+         return last;
+      }
+   } else { // if (firstVal > lastVal)
+      if (midVal < lastVal) {
+         return firstVal < midVal ? middle : first;
+      } else {
+         return last;
+      }
+   }
+}
+
+__global__ void kernelSort(Geometry *list[], int start, int end, int axis) {
+   SortFrame stack[kMaxStackSize];
+   int stackSize = 0;
+   bool stackPopped = false;
+
+   int size = end - start;
+   int topOfBottom;
+   Geometry **arr = list + start;
+   while (1) {
+      if (stackSize == kMaxStackSize) {
+         printf("Stack size exceeded, aborting\n");
+         return;
+      }
+      // If small enough size, do insertion sort
+      if (size < kInsertionSortCutoff) {
+         for (int i = 1; i < size; i++) {
+            int j = i;
+            Geometry *toInsert = arr[j];
+            for (; j > 0 && toInsert->getCenter()[axis] < arr[j - 1]->getCenter()[axis]; j--) {
+               arr[j] = arr[j-1];
+            }
+            arr[j] = toInsert;
+         }
+      } else {
+         if (!stackPopped) {
+            int pivot = pickPivot(arr, size, axis);
+            SWAP(arr[pivot], arr[size - 1]);
+            topOfBottom = 0;
+            for (int i = 0; i < size - 1; i++) {
+               if(arr[i]->getCenter()[axis] < arr[size - 1]->getCenter()[axis]) {
+                  SWAP(arr[i], arr[topOfBottom++]);   
+               }             
+            }
+            SWAP(arr[topOfBottom++], arr[size - 1]);   
+            stack[stackSize++] = SortFrame(topOfBottom, size, arr); 
+            size = topOfBottom;
+            stackPopped = false;
+            continue;
+         } else {
+            arr += topOfBottom;
+            size -= topOfBottom;
+            stackPopped = false;
+            continue;
+         }
+      }
+
+      if (stackSize == 0) break;
+      arr = stack[stackSize - 1].arr;
+      size = stack[stackSize - 1].size;
+      topOfBottom = stack[stackSize - 1].topOfBottom;
+      stackSize--;
+      stackPopped = true;
+   }
+}
+
+void singleThreadSort(Geometry *geomList[], int start, int end, int axis, cudaStream_t stream) {
+   kernelSort<<<1, 1, 0, stream>>>(geomList, start, end, axis);
+}
+
 __global__ void merge(Geometry *oldBuffer[], Geometry *newBuffer[], int width, int size, int axis) {
    int idx = blockIdx.x * blockDim.x + threadIdx.x;
    int i1 = idx * width * 2;
@@ -422,7 +510,6 @@ __global__ void setupBVHNodes(Geometry *geomList[], int geomCount, BVHNode *node
       nodeBuffer[idx] = new BVHNode(geomList[idx * 2]);       
    } 
 }
-
 void formBVH(Geometry *dGeomList[], int geomCount, Plane *planeList[], int planeCount, BVHTree *dTree) {
 
    vector<pair<int, int> > *oldQueue = new vector<pair<int, int> >();
@@ -436,18 +523,30 @@ void formBVH(Geometry *dGeomList[], int geomCount, Plane *planeList[], int plane
    Geometry **dBuffer;
    HANDLE_ERROR(cudaMalloc(&dBuffer, sizeof(Geometry *) * geomCount));
 
+   bool useMultiThread = true;
+
    int start = 0, end;
-   int axis = kZAxis;
+   int axis = kXAxis;
+   int curStream = 0;
    oldQueue->push_back(pair<int, int>(0, geomCount));
    while(oldQueue->size() > 0) {
+      useMultiThread = true;
          
-      multiKernelSort(dGeomList, dBuffer, *oldQueue, streams, axis);
+      if (useMultiThread)
+         multiKernelSort(dGeomList, dBuffer, *oldQueue, streams, axis);
       while (oldQueue->size() > 0) {
          start = oldQueue->back().first;
          end = oldQueue->back().second;
          oldQueue->pop_back();
 
          if (end - start > 2) {
+            //if (!useMultiThread) {
+            //   singleThreadSort(dGeomList, start, end, axis, streams[curStream]);
+            //   curStream = (curStream + 1) % kNumStreams;
+            //} else {
+            //   if (multiThreadSort(dGeomList, dBuffer, start, end, axis) != dGeomList) SWAP(dGeomList, dBuffer);
+            //}
+
             int closestPow2 = 2;
             while (closestPow2 * 2 < end - start) closestPow2 *= 2;
 
@@ -455,6 +554,10 @@ void formBVH(Geometry *dGeomList[], int geomCount, Plane *planeList[], int plane
             newQueue->push_back(pair<int, int>(start + closestPow2, end));
          }       
       }
+      //if (!useMultiThread) {
+      //   cudaDeviceSynchronize();
+      //   checkCUDAError("kernelSort failed");
+      //}
 
       SWAP(newQueue, oldQueue);
       axis = (axis + 1) % kAxisNum;

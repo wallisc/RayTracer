@@ -3,9 +3,7 @@
 #include "Box.h"
 #include "GeometryUtil.h"
 #include "Util.h"
-
-
-
+#include "kernel.h"
 
 typedef struct BVHNode {
    BVHNode *left, *right;
