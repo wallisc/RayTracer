@@ -1,4 +1,3 @@
 Optimized the sphere intersections
 Add a Interceptable for bounding boxes
-Fix the shader double pointer
-Change invRecLevel to be a recLevel
+Combing isComment and isUV into a single method

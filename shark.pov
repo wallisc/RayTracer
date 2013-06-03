@@ -1,12 +1,13 @@
 
 camera {
-    location <0, 100, -100>
+    location <-600, 100, -600>
     up <0, 1, 0>
-    right <1.33, 0, 0>
-    look_at <100, 0, 600>
+    right <1.15, 0, -1.15>
+    look_at <0, 0, 0>
 }
 
-light_source { <0, 50, 0> color rgb <1.0, 1.0, 1.0> }
+//light_source { <0, 50, 0> color rgb <1.0, 1.0, 1.0> }
+light_source { <-600, 200, -600> color rgb <1.0, 1.0, 1.0> }
 
 plane {<0, 1, 0>, -100
    pigment {color rgb <0.2, 0.2, 0.8>}

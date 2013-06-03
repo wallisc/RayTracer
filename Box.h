@@ -22,6 +22,11 @@ public:
       return generateBoundingBox(minP, maxP, trans);
    }
 
+   __device__ virtual glm::vec2 UVAt(const Ray &r, float param) const {
+      printf("Boxes do not currently support textures\n");
+      return glm::vec2(0.0f);
+   }
+
    __device__ virtual glm::vec3 getCenter() const { 
       glm::vec3 c = (minP + maxP) / 2.0f;
       glm::vec4 objSpaceCenter(c.x, c.y, c.z, 1.0f);

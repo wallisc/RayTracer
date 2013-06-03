@@ -10,11 +10,13 @@
 class SmoothTriangle : public Triangle {
 public:
    __device__ SmoothTriangle(const glm::vec3 &point1, const glm::vec3 &point2, 
-              const glm::vec3 &point3, const glm::vec3 &norm1, 
-              const glm::vec3 &norm2, const glm::vec3 &norm3, 
-              const Material &mat, const glm::mat4 &trans,
-              const glm::mat4 &invTrans) : Triangle(point1, point2, point3, 
-                                                    mat, trans, invTrans) {
+           const glm::vec3 &point3, const glm::vec3 &norm1, 
+           const glm::vec3 &norm2, const glm::vec3 &norm3, 
+           const Material &mat, const glm::mat4 &trans,
+           const glm::mat4 &invTrans, glm::vec2 vt1, 
+           glm::vec2 vt2, glm::vec2 vt3)
+      : Triangle(point1, point2, point3, mat, trans, invTrans, 
+         vt1, vt2, vt3) {
 
       glm::vec4 wsNorm1 = glm::vec4(norm1.x, norm1.y, norm1.z, 0.0f) * invTrans;
       glm::vec4 wsNorm2 = glm::vec4(norm2.x, norm2.y, norm2.z, 0.0f) * invTrans;

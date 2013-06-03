@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <float.h>
 
+#include "glm/gtc/matrix_transform.hpp"
+
 #include "Light.h"
 #include "Camera.h"
 #include "PointLight.h"
@@ -17,16 +19,49 @@
 #include "CookTorranceShader.h"
 #include "cudaError.h"
 #include "kernel.h"
-#include "curand.h"
+
+#include "bvh.cpp"
 
 #define kNoShapeFound NULL
 
+const float kMaxDist = FLT_MAX;
 using glm::vec3;
 using std::vector;
 using std::pair;
 
-const int kBlockWidth = 16;
-const float kMaxDist = FLT_MAX;
+texture<uchar4, 2, cudaReadModeNormalizedFloat> mytex;
+
+// Only works with 24 bit images that are a power of 2
+unsigned char* readBMP(char* filename, int *retWidth, int *retHeight)
+{
+   int i;
+   FILE* f = fopen(filename, "rb");
+   unsigned char info[54];
+   fread(info, sizeof(unsigned char), 54, f); // read the 54-byte header
+
+   // extract image height and width from header
+   int width = *(int*)&info[18];
+   int height = *(int*)&info[22];
+
+   int size = 3 * width * height;
+   unsigned char* data = new unsigned char[size]; // allocate 3 bytes per pixel
+   unsigned char* retData = new unsigned char[size + width * height]; // allocate 4 bytes per pixel
+   fread(data, sizeof(unsigned char), size, f); // read the rest of the data at once
+   fclose(f);
+
+   for(i = 0; i < width * height; i++)
+   {
+      retData[4 * i] = data[3 * i + 2];
+      retData[4 * i + 1] = data[3 * i + 1];
+      retData[4 * i + 2] = data[3 * i];
+      retData[4 * i + 3] = 0;
+   }
+
+   delete data;
+   *retWidth = width;
+   *retHeight = height;
+   return retData;
+}
 
 
 // Find the closest shape. The index of the intersecting object is stored in
@@ -82,26 +117,31 @@ __device__ void getClosestIntersection(const Ray &ray, BVHTree *tree,
                return;
             }
          }
-      } else if (!justPoppedStack && isFloatAboveZero(cursor->left->bb.getIntersection(ray)) && cursor->left->bb.getIntersection(ray) < t) {
+      } else if (!justPoppedStack 
+                 && isFloatAboveZero(cursor->left->bb.getIntersection(ray)) 
+                 && cursor->left->bb.getIntersection(ray) < t) {
          //go left
          stack[stackSize++] = cursor;
          cursor = cursor->left;
          justPoppedStack = false;
          continue;
-      } else if (cursor->right && isFloatAboveZero(cursor->right->bb.getIntersection(ray)) && cursor->right->bb.getIntersection(ray) < t) {
+      } else if (cursor->right 
+                 && isFloatAboveZero(cursor->right->bb.getIntersection(ray)) 
+                 && cursor->right->bb.getIntersection(ray) < t) {
          //go right
          cursor = cursor->right;
          justPoppedStack = false;
          continue;
       }
 
-      if(stackSize > 0) {
-         // Pop the stack
-         cursor = stack[stackSize - 1]; 
-         justPoppedStack = true;
+      if(stackSize == 0) {
+         break;
       }
+      // Pop the stack
+      cursor = stack[stackSize - 1]; 
+      justPoppedStack = true;
       stackSize--;
-   } while(stackSize >= 0);
+   } while(true);
 
    for (int planeIdx = 0; planeIdx < tree->planeListSize; planeIdx++) {
       float dist = tree->planeList[planeIdx]->getIntersection(ray);
@@ -124,10 +164,12 @@ __device__ bool isInShadow(const Ray &shadow, BVHTree *tree, float intersectPara
 }
 
 template <int invRecLevel>
-__device__ glm::vec3 getReflection(glm::vec3 point, glm::vec3 normal, glm::vec3 eyeVec, 
-   BVHTree *tree, Light *lights[], int lightCount, Shader **shader) {
+__device__ glm::vec3 getReflection(glm::vec3 point, glm::vec3 normal, 
+      glm::vec3 eyeVec, BVHTree *tree, Light *lights[], int lightCount, 
+      Shader **shader, curandState *randState) {
 
    Ray reflectRay(point, 2.0f * glm::dot(normal, eyeVec) * normal - eyeVec);
+   // Offset the ray so there's no self-intersection
    reflectRay.o += BIG_EPSILON * reflectRay.d;
    Geometry *closestGeom;
    float t;
@@ -137,19 +179,19 @@ __device__ glm::vec3 getReflection(glm::vec3 point, glm::vec3 normal, glm::vec3 
       return shadeObject<invRecLevel>(tree, 
             lights, lightCount,
             closestGeom, t,
-            reflectRay, shader);
+            reflectRay, shader, randState);
    } 
    return vec3(0.0f);
 }
 
 template <>
-__device__ glm::vec3 getReflection<0>(glm::vec3 point, glm::vec3 normal, glm::vec3 eyeVec, 
-   BVHTree *tree, Light *lights[], int lightCount, 
-   Shader **shader) { return vec3(0.0f); }
+__device__ glm::vec3 getReflection<0>(glm::vec3 point, glm::vec3 normal, 
+      glm::vec3 eyeVec, BVHTree *tree, Light *lights[], int lightCount, 
+      Shader **shader, curandState *randState) { return vec3(0.0f); }
 
 template <int invRecLevel>
 __device__ glm::vec3 getRefraction(glm::vec3 point, glm::vec3 normal, float ior, glm::vec3 eyeVec, 
-   BVHTree *tree, Light *lights[], int lightCount, Shader **shader) {
+   BVHTree *tree, Light *lights[], int lightCount, Shader **shader, curandState *randState) {
 
    float n1, n2;
    vec3 refrNorm;
@@ -177,38 +219,97 @@ __device__ glm::vec3 getRefraction(glm::vec3 point, glm::vec3 normal, float ior,
          return shadeObject<invRecLevel>(tree,
                lights, lightCount,
                closestGeom, t,
-               refracRay, shader);
+               refracRay, shader, randState);
       }
    } 
    return vec3(0.0f);
 }
 
+
+
 template <>
 __device__ glm::vec3 getRefraction<0>(glm::vec3 point, glm::vec3 normal, float ior, glm::vec3 eyeVec, 
-   BVHTree *tree, Light *lights[], int lightCount, 
-   Shader **shader) { return vec3(0.0f); }
+      BVHTree *tree, Light *lights[], int lightCount, Shader **shader, curandState *randState) 
+   { return vec3(0.0f); }
 
+__device__ vec3 cosineWeightedSample(vec3 normal, float rand1, float rand2) {
+   float distFromCenter = 1.0f - sqrt(rand1);
+   float theta = 2.0f * M_PI * rand2;
+   float phi = M_PI / 2.0f - acos(distFromCenter);
+
+   float phiDeg = phi * 180.0f / M_PI;
+   float thetaDeg = theta * 180.0f / M_PI;
+
+   vec3 outV = normal.x < .99f ? glm::cross(normal, vec3(1.0f, 0.0, 0.0)) : vec3(0.0f, 1.0f, 0.0f); 
+   glm::mat4 rot1 = glm::rotate(glm::mat4(1.0f), phiDeg, outV);
+   glm::mat4 rot2 = glm::rotate(glm::mat4(1.0f), thetaDeg, normal);
+   glm::vec4 norm(normal.x, normal.y, normal.z, 0.0f);
+   
+   return vec3(rot2 * rot1 * norm);
+}
+
+template<int invRecLevel>
+__device__ glm::vec3 getIndirect(vec3 point, vec3 normal, BVHTree *tree, Light *lights[], int lightCount, 
+      Shader **shader, curandState *randState) {
+   vec3 totalColor(0.0f);
+
+   float sampleRange = 1.0f / kMonteCarloSamplesRoot;
+
+   for (int xSample = 0; xSample < kMonteCarloSamplesRoot; xSample++) {
+      for (int ySample = 0; ySample < kMonteCarloSamplesRoot; ySample++) {
+         float rand1 = curand_uniform(randState) * sampleRange + xSample * sampleRange; 
+         float rand2 = curand_uniform(randState) * sampleRange + ySample * sampleRange;
+         vec3 dir = cosineWeightedSample(normal, rand1, rand2);
+         Ray mcRay(point, dir);
+         Geometry *geom;
+         float t;
+         getClosestIntersection(mcRay, tree, &geom, &t);
+         if (geom != kNoShapeFound) { 
+            vec3 c = shadeObject<1>(tree, lights, lightCount, geom, t, mcRay, shader, randState);
+            totalColor += c / ((float)kMonteCarloSamples);
+         }
+      }
+   }
+   return totalColor;
+}
+
+template<>
+__device__ glm::vec3 getIndirect<0>(vec3 point, vec3 normal, BVHTree *tree, Light *lights[], int lightCount, 
+      Shader **shader, curandState *randState) { return vec3(0.0f); }
+
+__device__ glm::vec3 getColor(Geometry *geom, Ray ray, float param) {
+   Material m = geom->getMaterial();
+   if (m.texId == NO_TEXTURE) {
+      return m.clr;
+   } else {
+      glm::vec2 uv = geom->UVAt(ray, param);
+      float4 clr = tex2D(mytex, uv.x, uv.y);
+      return vec3(clr.x, clr.y, clr.z);
+   }
+}
 
 //Note: The ray parameter must stay as a copy (not a reference) 
 template <int invRecLevel> 
 __device__ vec3 shadeObject(BVHTree *tree, 
       Light *lights[], int lightCount, Geometry* geom, 
-      float intParam, Ray ray, Shader **shader) {
+      float intParam, Ray ray, Shader **shader, curandState *randStates) {
 
    glm::vec3 intersectPoint = ray.getPoint(intParam);
    Material m = geom->getMaterial();
    vec3 normal = geom->getNormalAt(ray, intParam);
+   vec3 matClr = getColor(geom, ray, intParam);
    vec3 eyeVec = glm::normalize(-ray.d);
    vec3 totalLight(0.0f);
 
    for(int lightIdx = 0; lightIdx < lightCount; lightIdx++) {
-      vec3 light = lights[lightIdx]->getLightAtPoint(geom, intersectPoint);
+      vec3 light = lights[lightIdx]->getLightAtPoint(intersectPoint);
       vec3 lightDir = lights[lightIdx]->getLightDir(intersectPoint);
       Ray shadow = lights[lightIdx]->getShadowFeeler(intersectPoint);
       float intersectParam = geom->getIntersection(shadow);
       bool inShadow = isInShadow(shadow, tree, intersectParam); 
 
-      totalLight += (*shader)->shade(m.clr, m.amb, m.dif, m.spec, m.rough, 
+      
+      totalLight += (*shader)->shade(matClr, m.amb, m.dif, m.spec, m.rough, 
             eyeVec, lightDir, light, normal, 
             inShadow);
    }
@@ -216,29 +317,33 @@ __device__ vec3 shadeObject(BVHTree *tree,
    vec3 reflectedLight(0.0f);
    if (m.refl > 0.0f && invRecLevel - 1 > 0) {
       reflectedLight = getReflection<invRecLevel - 1>(intersectPoint, 
-         normal, eyeVec, tree, lights, lightCount, shader);
+         normal, eyeVec, tree, lights, lightCount, shader, randStates);
    }
 
    vec3 refractedLight(0.0f);
    if (m.refr > 0.0f && invRecLevel - 1 > 0) {
       refractedLight = getRefraction<invRecLevel - 1>(intersectPoint, 
-         normal, m.ior, eyeVec, tree, lights, lightCount, shader);
+         normal, m.ior, eyeVec, tree, lights, lightCount, shader, randStates);
 
    }
 
+   //vec3 indirectLight = getIndirect<invRecLevel - 1>(intersectPoint + normal * BIG_EPSILON, normal, tree, lights, lightCount, shader, randStates);
+
    return totalLight * (1.0f - m.refl - m.alpha)
-      + m.refl * reflectedLight+ m.alpha * refractedLight;
+      + m.refl * reflectedLight+ m.alpha * refractedLight;// + indirectLight;
 }
 
 template <> 
 __device__ vec3 shadeObject<0>(BVHTree *tree, 
-      Light *lights[], int lightCount, int objIdx, 
-      float intParam, Ray ray, Shader **shader) { return vec3(0.0f); }
+      Light *lights[], int lightCount, Geometry *geom, 
+      float intParam, Ray ray, Shader **shader, curandState *randStates) { return vec3(0.0f); }
 
-__global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *lights[], TKSphere *sphereTks, int numSpheres,
-      TKPlane *planeTks, int numPlanes, TKTriangle *triangleTks, int numTris, TKBox *boxTks, int numBoxes,
-      TKSmoothTriangle *smthTriTks, int numSmthTris, TKPointLight *pLightTks, int numPointLights, 
-      Shader **shader, ShadingType stype) {
+__global__ void initScene(Geometry *geomList[], Plane *planeList[], 
+      Light *lights[], TKSphere *sphereTks, int numSpheres, TKPlane *planeTks, 
+      int numPlanes, TKTriangle *triangleTks, int numTris, TKBox *boxTks, 
+      int numBoxes, TKSmoothTriangle *smthTriTks, int numSmthTris, 
+      TKPointLight *pLightTks, int numPointLights, Shader **shader, 
+      ShadingType stype) {
 
    int idx = blockIdx.x * blockDim.x + threadIdx.x;
    int gridSize = gridDim.x * blockDim.x;
@@ -280,9 +385,9 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
    for (int triIdx = idx; triIdx < numTris; triIdx += gridSize) {
       const TKTriangle &t = triangleTks[triIdx];
       const TKFinish f = t.mod.fin;
-      Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+      Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior, t.mod.pig.texId);
       geomList[triIdx + geomListSize] = new Triangle(t.p1, t.p2, t.p3, m, t.mod.trans, 
-            t.mod.invTrans);
+            t.mod.invTrans, t.vt1, t.vt2, t.vt3);
       if (!geomList[triIdx + geomListSize]) printf("Error at %d\n", triIdx + geomListSize);
    }
    geomListSize += numTris;
@@ -299,9 +404,9 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
    for (int smTriIdx = idx; smTriIdx < numSmthTris; smTriIdx += gridSize) {
       const TKSmoothTriangle &t = smthTriTks[smTriIdx];
       const TKFinish f = t.mod.fin;
-      Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior);
+      Material m(t.mod.pig.clr, t.mod.pig.f, f.amb, f.dif, f.spec, f.rough, f.refl, f.refr, f.ior, t.mod.pig.texId);
       geomList[smTriIdx + geomListSize] = new SmoothTriangle(t.p1, t.p2, t.p3, t.n1, t.n2, t.n3, 
-            m, t.mod.trans, t.mod.invTrans);
+            m, t.mod.trans, t.mod.invTrans, t.vt1, t.vt2, t.vt3);
       if (!geomList[smTriIdx + geomListSize]) printf("Error at %d\n", smTriIdx + geomListSize);
 
    }
@@ -315,296 +420,18 @@ __global__ void initScene(Geometry *geomList[], Plane *planeList[], Light *light
 
 }
 
-typedef struct SortFrame {
-   int size;
-   Geometry **arr;
-   int topOfBottom;
-   __device__ SortFrame(int nTopOfBottom = 0, int nSize = 0, Geometry **nArr = NULL) 
-      : size(nSize), topOfBottom(nTopOfBottom), arr(nArr) {}
-} SortFrame;
+__global__ void initCurand(curandState randStates[], int resWidth, int resHeight) {
+   int x = blockIdx.x * blockDim.x + threadIdx.x;
+   int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-__device__ int pickPivot(Geometry *list[], int size, int axis) {
-   int first = 0, middle = size / 2, last = size -1;
-   float firstVal = list[first]->getCenter()[axis];
-   float midVal = list[middle]->getCenter()[axis]; 
-   float lastVal = list[last]->getCenter()[axis];
+   if (x >= resWidth || y >= resHeight)
+      return;
 
-   if (firstVal < lastVal) {
-      if (midVal < lastVal) {
-         return midVal > firstVal ? middle : first;
-      } else {
-         return last;
-      }
-   } else { // if (firstVal > lastVal)
-      if (midVal < lastVal) {
-         return firstVal < midVal ? middle : first;
-      } else {
-         return last;
-      }
-   }
+   int index = y * resWidth + x;
+   curand_init(index, 0, 0, &randStates[index]);
 }
 
-__global__ void kernelSort(Geometry *list[], int start, int end, int axis) {
-   SortFrame stack[kMaxStackSize];
-   int stackSize = 0;
-   bool stackPopped = false;
-
-   int size = end - start;
-   int topOfBottom;
-   Geometry **arr = list + start;
-   while (1) {
-      if (stackSize == kMaxStackSize) {
-         printf("Stack size exceeded, aborting\n");
-         return;
-      }
-      // If small enough size, do insertion sort
-      if (size < kInsertionSortCutoff) {
-         for (int i = 1; i < size; i++) {
-            int j = i;
-            Geometry *toInsert = arr[j];
-            for (; j > 0 && toInsert->getCenter()[axis] < arr[j - 1]->getCenter()[axis]; j--) {
-               arr[j] = arr[j-1];
-            }
-            arr[j] = toInsert;
-         }
-      } else {
-         if (!stackPopped) {
-            int pivot = pickPivot(arr, size, axis);
-            SWAP(arr[pivot], arr[size - 1]);
-            topOfBottom = 0;
-            for (int i = 0; i < size - 1; i++) {
-               if(arr[i]->getCenter()[axis] < arr[size - 1]->getCenter()[axis]) {
-                  SWAP(arr[i], arr[topOfBottom++]);   
-               }             
-            }
-            SWAP(arr[topOfBottom++], arr[size - 1]);   
-            stack[stackSize++] = SortFrame(topOfBottom, size, arr); 
-            size = topOfBottom;
-            stackPopped = false;
-            continue;
-         } else {
-            arr += topOfBottom;
-            size -= topOfBottom;
-            stackPopped = false;
-            continue;
-         }
-      }
-
-      if (stackSize == 0) break;
-      arr = stack[stackSize - 1].arr;
-      size = stack[stackSize - 1].size;
-      topOfBottom = stack[stackSize - 1].topOfBottom;
-      stackSize--;
-      stackPopped = true;
-   }
-}
-
-void singleThreadSort(Geometry *geomList[], int start, int end, int axis, cudaStream_t stream) {
-   kernelSort<<<1, 1, 0, stream>>>(geomList, start, end, axis);
-}
-
-__global__ void merge(Geometry *oldBuffer[], Geometry *newBuffer[], int width, int size, int axis) {
-   int idx = blockIdx.x * blockDim.x + threadIdx.x;
-   int i1 = idx * width * 2;
-   int i2 = idx * width * 2 + width;
-   int div1End = min(i2, size);
-   int div2End = min(i2 + width, size); 
-
-   for(int i = i1; i < div2End; i++) {
-      if (i1 < div1End && (i2 >= div2End || oldBuffer[i1]->getCenter()[axis] < oldBuffer[i2]->getCenter()[axis])) {
-         newBuffer[i] = oldBuffer[i1++];
-      } else {
-         newBuffer[i] = oldBuffer[i2++];
-      }
-   }
-}
-
-Geometry **multiThreadSort(Geometry *buffer1[], Geometry *buffer2[], int start, int end, int axis) {
-   int size = end - start;
-   int blockSize = kBlockWidth * kBlockWidth;
-   //TODO figure out why size doesn't work but size + 1 does
-   for (int width = 1; width < size + 1; width = 2 * width) {
-      int divs = (size - 1) / (width * 2) + 1;
-      int gridSize = (divs - 1) / blockSize + 1; 
-      merge<<<gridSize, blockSize>>>(buffer1 + start, buffer2 + start, width, size, axis);
-      cudaDeviceSynchronize();
-      SWAP(buffer1, buffer2);
-   }
-   checkCUDAError("mergeSort failed");
-   return buffer1;
-}
-
-__global__ void copyOver(Geometry *writeTo[], Geometry *readFrom[], int size) {
-   int idx = blockIdx.x * blockDim.x + threadIdx.x;
-   if (idx >= size) return;
-   writeTo[idx] = readFrom[idx];
-}
-
-void multiKernelSort(Geometry *buffer1[], Geometry *buffer2[], const vector<pair<int, int> > &sortIdxs, cudaStream_t streams[], int axis) {
-   int blockSize = kBlockWidth * kBlockWidth;
-   int size = 0;
-   int swaps = 1;
-   for (int i = 0; i < sortIdxs.size(); i++) {
-      int sortSize = sortIdxs[i].second - sortIdxs[i].first;
-      if (sortSize > size) size = sortSize;
-   }
-
-   for (int width = 1; width < size + 1; width = 2 * width) {
-      for (int i = 0; i < sortIdxs.size(); i++) {
-         int streamIdx = i % kNumStreams;
-         int start = sortIdxs[i].first;
-         int end = sortIdxs[i].second;
-         int sortSize = end - start;
-         if (width >= sortSize) continue;
-
-         int divs = (sortSize - 1) / (width * 2) + 1;
-         int gridSize = (divs - 1) / blockSize + 1; 
-         merge<<<gridSize, blockSize, 0, streams[streamIdx]>>>(buffer1 + start, buffer2 + start, width, sortSize, axis);
-         if (divs == 1 && swaps % 2 == 1) {
-            gridSize = (sortSize - 1) / blockSize + 1;
-            copyOver<<<gridSize, blockSize, 0, streams[streamIdx]>>>(buffer1 + start, buffer2 + start, sortSize);
-         }
-      }
-      swaps++;
-      SWAP(buffer1, buffer2);
-      cudaDeviceSynchronize();
-      checkCUDAError("mergeSort failed");
-   }
-}
-
-__global__ void createBVHTree(BVHTree *tree, BVHNode *nodes[], Plane *planeList[], int planeCount) {
-   tree->root = nodes[0];
-   tree->planeList = planeList;
-   tree->planeListSize = planeCount;
-}
-
-__global__ void convergeBVHNodes(BVHNode *oldBuffer[], BVHNode *newBuffer[], int bufferSize, int nodesLeft) {
-   int idx = blockIdx.x * blockDim.x + threadIdx.x;
-   
-   if (idx >= bufferSize) return;
-   newBuffer[idx] = NULL;
-
-   if (idx * 2 >= bufferSize) return;
-
-   if (idx * 2 + 1 < nodesLeft) {
-      newBuffer[idx] = new BVHNode();
-      newBuffer[idx]->left = oldBuffer[idx * 2];
-      newBuffer[idx]->right = oldBuffer[idx * 2 + 1];
-      newBuffer[idx]->bb = combineBoundingBox(newBuffer[idx]->left->bb, newBuffer[idx]->right->bb);
-      BoundingBox bb = newBuffer[idx]->bb;
-   } else if (idx * 2 < nodesLeft) {
-      newBuffer[idx] = oldBuffer[idx * 2];       
-   } 
-}
-
-__global__ void setupBVHNodes(Geometry *geomList[], int geomCount, BVHNode *nodeBuffer[]) {
-   int idx = blockIdx.x * blockDim.x + threadIdx.x;
-   if (idx * 2 >= geomCount) return;
-
-   if (idx * 2 + 1 < geomCount) {
-      nodeBuffer[idx] = new BVHNode();
-      nodeBuffer[idx]->left = new BVHNode(geomList[idx * 2]);
-      nodeBuffer[idx]->right = new BVHNode(geomList[idx * 2 + 1]);
-      nodeBuffer[idx]->bb = combineBoundingBox(nodeBuffer[idx]->left->bb, nodeBuffer[idx]->right->bb);
-   } else {
-      nodeBuffer[idx] = new BVHNode(geomList[idx * 2]);       
-   } 
-}
-void formBVH(Geometry *dGeomList[], int geomCount, Plane *planeList[], int planeCount, BVHTree *dTree) {
-
-   vector<pair<int, int> > *oldQueue = new vector<pair<int, int> >();
-   vector<pair<int, int> > *newQueue = new vector<pair<int, int> >();
-
-   cudaStream_t streams[kNumStreams];
-   for (int stream = 0; stream < kNumStreams; stream++) {
-      cudaStreamCreate(&streams[stream]);
-   }
-
-   Geometry **dBuffer;
-   HANDLE_ERROR(cudaMalloc(&dBuffer, sizeof(Geometry *) * geomCount));
-
-   bool useMultiThread = true;
-
-   int start = 0, end;
-   int axis = kXAxis;
-   int curStream = 0;
-   oldQueue->push_back(pair<int, int>(0, geomCount));
-   while(oldQueue->size() > 0) {
-      useMultiThread = true;
-         
-      if (useMultiThread)
-         multiKernelSort(dGeomList, dBuffer, *oldQueue, streams, axis);
-      while (oldQueue->size() > 0) {
-         start = oldQueue->back().first;
-         end = oldQueue->back().second;
-         oldQueue->pop_back();
-
-         if (end - start > 2) {
-            //if (!useMultiThread) {
-            //   singleThreadSort(dGeomList, start, end, axis, streams[curStream]);
-            //   curStream = (curStream + 1) % kNumStreams;
-            //} else {
-            //   if (multiThreadSort(dGeomList, dBuffer, start, end, axis) != dGeomList) SWAP(dGeomList, dBuffer);
-            //}
-
-            int closestPow2 = 2;
-            while (closestPow2 * 2 < end - start) closestPow2 *= 2;
-
-            newQueue->push_back(pair<int, int>(start, closestPow2));
-            newQueue->push_back(pair<int, int>(start + closestPow2, end));
-         }       
-      }
-      //if (!useMultiThread) {
-      //   cudaDeviceSynchronize();
-      //   checkCUDAError("kernelSort failed");
-      //}
-
-      SWAP(newQueue, oldQueue);
-      axis = (axis + 1) % kAxisNum;
-   }
-
-   BVHNode **dBuffer1, **dBuffer2;
-   int bufferSize = (geomCount - 1) / 2 + 1;
-
-   HANDLE_ERROR(cudaMalloc(&dBuffer1, sizeof(BVHNode *) * bufferSize));
-   HANDLE_ERROR(cudaMalloc(&dBuffer2, sizeof(BVHNode *) * bufferSize));
-
-   int blockSize = kBlockWidth * kBlockWidth;
-   int gridSize = (bufferSize - 1) / blockSize + 1;
-   setupBVHNodes<<<gridSize, blockSize>>>(dGeomList, geomCount, dBuffer1);
-   cudaDeviceSynchronize();
-   checkCUDAError("setupBVHNodes failed");
-
-   for(int nodesLeft = bufferSize; nodesLeft > 1; nodesLeft = (nodesLeft - 1) / 2 + 1) {
-      gridSize = (nodesLeft - 1) / blockSize + 1;
-      convergeBVHNodes<<<gridSize, blockSize>>>(dBuffer1, dBuffer2, bufferSize, nodesLeft);
-      cudaDeviceSynchronize();
-      checkCUDAError("convergeBVHNodes failed");
-      SWAP(dBuffer1, dBuffer2);
-   }
-
-   createBVHTree<<<1, 1>>>(dTree, dBuffer1, planeList, planeCount);
-}
-
-__global__ void deleteScene(Geometry *geomList[], int geomCount, Light *lightList[], int lightCount, Shader **shader) {
-   // This should really only be run with one thread and block anyways, but this is a safety check
-   if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
-      delete *shader;
-
-      for (int i = 0; i < geomCount; i++) {
-         delete geomList[i];
-      }
-
-      for (int i = 0; i < lightCount; i++) {
-         delete lightList[i];
-      }
-   }
-}
-
-__global__ void rayTrace(int resWidth, int resHeight, Camera cam,
-      BVHTree *tree, Light *lights[], int lightCount,  
-      vec3 output[], Shader **shader) {
-
+__global__ void generateCameraRays(int resWidth, int resHeight, Camera cam, Ray rayQueue[], curandState randStates[]) {
    int x = blockIdx.x * blockDim.x + threadIdx.x;
    int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -615,14 +442,46 @@ __global__ void rayTrace(int resWidth, int resHeight, Camera cam,
 
    // Generate rays
    //Image space coordinates 
-   float u = 2.0f * (x / (float)resWidth) - 1.0f; 
-   float v = 2.0f * (y / (float)resHeight) - 1.0f;
+   float uJitter = (curand_uniform(&randStates[index]) - .5f) / (float)resWidth; // Passing in arbitrary seed values
+   float vJitter = (curand_uniform(&randStates[index]) - .5f) / (float)resHeight;
+   float u = 2.0f * (x / (float)resWidth) - 1.0f + uJitter; 
+   float v = 2.0f * (y / (float)resHeight) - 1.0f + vJitter; 
 
    // .5f is because the magnitude of cam.right and cam.up should be equal
    // to the width and height of the image plane in world space
    vec3 rPos = u *.5f * cam.right + v * .5f * cam.up + cam.pos;
    vec3 rDir = rPos - cam.pos + cam.lookAtDir;
-   Ray ray(rPos, rDir);
+   rayQueue[index] = Ray(rPos, rDir);
+}
+
+__device__ vec3 addDirectLight(const Ray &eyeRay, Light *lights[], int lightCount) {
+   glm::vec3 totClr(0.0f); 
+   for (int lightIdx = 0; lightIdx < lightCount; lightIdx++) {
+      float lightPow = glm::dot(lights[lightIdx]->getLightDir(eyeRay.o), eyeRay.d);
+
+      //lightPow = pow(lightPow, 18)
+      lightPow = lightPow * lightPow * lightPow * lightPow * lightPow * lightPow;
+      lightPow *= lightPow * lightPow * lightPow * lightPow * lightPow * lightPow;
+      lightPow *= lightPow * lightPow * lightPow * lightPow * lightPow * lightPow;
+
+      totClr += lightPow * lights[lightIdx]->getLightAtPoint(eyeRay.o); 
+   }
+   return totClr;
+}
+
+__global__ void rayTrace(int resWidth, int resHeight, Ray rayQueue[],
+      BVHTree *tree, Light *lights[], int lightCount,  
+      vec3 output[], Shader **shader, curandState randStates[]) {
+
+   int x = blockIdx.x * blockDim.x + threadIdx.x;
+   int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+   if (x >= resWidth || y >= resHeight)
+      return;
+
+   int index = y * resWidth + x;
+
+   Ray ray = rayQueue[index];
 
    float t;
    Geometry *closestGeom;
@@ -630,7 +489,7 @@ __global__ void rayTrace(int resWidth, int resHeight, Camera cam,
 
    if (closestGeom != kNoShapeFound) {
       vec3 totalColor = shadeObject<kMaxRecurse>(tree, lights, lightCount, 
-            closestGeom, t, ray, shader);
+            closestGeom, t, ray, shader, &randStates[index]);
 
       output[index] = vec3(clamp(totalColor.x, 0, 1), 
                            clamp(totalColor.y, 0, 1), 
@@ -638,9 +497,15 @@ __global__ void rayTrace(int resWidth, int resHeight, Camera cam,
    } else {
       output[index] = vec3(0.0f);
    }
+
+   ray.d = glm::normalize(ray.d);
+   vec3 directLight = addDirectLight(ray, lights, lightCount);
+   output[index] += directLight;
 }
 
-__global__ void averageBuffer(int resWidth, int resHeight, int sampleCountSqrRoot, uchar4 *output, vec3 *antiAliasBuffer) {
+__global__ void averageBufferColors(int resWidth, int resHeight, 
+      int sampleCountSqrRoot, uchar4 *output, vec3 *antiAliasBuffer) {
+
    int x = blockIdx.x * blockDim.x + threadIdx.x;
    int y = blockIdx.y * blockDim.y + threadIdx.y;
    uchar4 clr;
@@ -653,7 +518,8 @@ __global__ void averageBuffer(int resWidth, int resHeight, int sampleCountSqrRoo
    vec3 endColor(0.0f);
    for (int xOffset = 0; xOffset < sampleCountSqrRoot; xOffset++) {
       for (int yOffset = 0; yOffset < sampleCountSqrRoot; yOffset++) {
-         int bufferIndex = x * sampleCountSqrRoot + xOffset + (y * sampleCountSqrRoot + yOffset) * resWidth * sampleCountSqrRoot;
+         int bufferIndex = x * sampleCountSqrRoot + xOffset + 
+               (y * sampleCountSqrRoot + yOffset) * resWidth * sampleCountSqrRoot;
          endColor += antiAliasBuffer[bufferIndex];
       }
    }
@@ -670,6 +536,27 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
    int geometryCount = 0;
    int lightCount = 0;
    int biggestListSize = 0;
+
+   int imgWidth, imgHeight;
+   unsigned char *texData = readBMP("blitz.bmp", &imgWidth, &imgHeight);
+
+   int imgSize = sizeof(uchar4) * imgWidth * imgHeight;
+   cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc(8, 8, 8, 8, cudaChannelFormatKindUnsigned);
+
+   cudaArray* cu_array;
+   cudaMallocArray(&cu_array, &channelDesc, imgWidth, imgHeight );
+
+   //copy image to device array cu_array – used as texture mytex on device
+   HANDLE_ERROR(cudaMemcpyToArray(cu_array, 0, 0, texData, imgSize, cudaMemcpyHostToDevice));
+   // set texture parameters
+   
+   mytex.addressMode[0] = cudaAddressModeWrap;
+   mytex.addressMode[1] = cudaAddressModeWrap;
+   mytex.filterMode = cudaFilterModeLinear;
+   mytex.normalized = true; 
+
+   // Bind the array to the texture
+   HANDLE_ERROR(cudaBindTextureToArray(mytex, cu_array, channelDesc));
 
    TKSphere *dSphereTokens = NULL;
    TKPlane *dPlaneTokens = NULL;
@@ -716,7 +603,8 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
 
    int smoothTriangleCount = data->smoothTriangles.size();
    if (smoothTriangleCount > 0) {
-      HANDLE_ERROR(cudaMalloc(&dSmthTriTokens, sizeof(TKSmoothTriangle) * smoothTriangleCount));
+      HANDLE_ERROR(cudaMalloc(&dSmthTriTokens, 
+               sizeof(TKSmoothTriangle) * smoothTriangleCount));
       HANDLE_ERROR(cudaMemcpy(dSmthTriTokens, &data->smoothTriangles[0],
                sizeof(TKSmoothTriangle) * smoothTriangleCount, cudaMemcpyHostToDevice));
       geometryCount += smoothTriangleCount;
@@ -740,10 +628,10 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
    int blockSize = kBlockWidth * kBlockWidth;
    int gridSize = (biggestListSize - 1) / blockSize + 1;
    // Fill up GeomList and LightList with actual objects on the GPU
-   initScene<<<gridSize, blockSize>>>(*dGeomList, *dPlaneList, *dLightList, dSphereTokens, sphereCount, 
-         dPlaneTokens, planeCount, dTriangleTokens, triangleCount, dBoxTokens, boxCount, 
-         dSmthTriTokens, smoothTriangleCount, dPointLightTokens, pointLightCount, 
-         dShader, stype);
+   initScene<<<gridSize, blockSize>>>(*dGeomList, *dPlaneList, *dLightList, 
+         dSphereTokens, sphereCount, dPlaneTokens, planeCount, dTriangleTokens, 
+         triangleCount, dBoxTokens, boxCount, dSmthTriTokens, smoothTriangleCount, 
+         dPointLightTokens, pointLightCount, dShader, stype);
 
    cudaDeviceSynchronize();
    checkCUDAError("initScene failed");
@@ -759,21 +647,14 @@ void allocateGPUScene(TKSceneData *data, Geometry ***dGeomList, Plane ***dPlaneL
    *retPlaneCount = planeCount;
 }
 
-void freeGPUScene(Geometry **dGeomList, int geomCount, Light **dLightList, 
-      int lightCount, Shader **shader) {
-   deleteScene<<<1, 1>>>(dGeomList, geomCount, dLightList, lightCount, shader);
-
-   HANDLE_ERROR(cudaFree(dGeomList));
-   HANDLE_ERROR(cudaFree(dLightList));
-   HANDLE_ERROR(cudaFree(shader));
-}
-
 extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width, 
       int height, uchar4 *output, int sampleCount) {
    Geometry **dGeomList; 
    Plane **dPlaneList; 
    Light **dLightList;
    Shader **dShader;
+   Ray *dRayQueue;
+   curandState *dRandStates;
 
    vec3 *dAntiAliasBuffer;
    uchar4 *dOutput;
@@ -786,7 +667,8 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
 
    int sqrSampleCount = sqrt(sampleCount);
    if (sqrSampleCount * sqrSampleCount != sampleCount) {
-      printf("Invalid sample count: %d. Sample count for anti aliasing must have an integer square root");
+      printf("Invalid sample count: %d. "
+             "Sample count for anti aliasing must have an integer square root");
       return;
    }
 
@@ -799,8 +681,12 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
    // Fill the geomList and light list with objects dynamically created on the GPU
    HANDLE_ERROR(cudaMalloc(&dShader, sizeof(Shader*)));
    HANDLE_ERROR(cudaMalloc(&dOutput, sizeof(uchar4) * width * height));
-   HANDLE_ERROR(cudaMalloc(&dAntiAliasBuffer, sizeof(vec3) * width * height * sampleCount));
-   allocateGPUScene(data, &dGeomList, &dPlaneList, &dLightList, &geometryCount, &planeCount, &lightCount, dShader, stype);
+   HANDLE_ERROR(cudaMalloc(&dAntiAliasBuffer, 
+         sizeof(vec3) * width * height * sampleCount));
+
+   allocateGPUScene(data, &dGeomList, &dPlaneList, &dLightList, &geometryCount, 
+         &planeCount, &lightCount, dShader, stype);
+
    cudaDeviceSynchronize();
    checkCUDAError("AllocateGPUScene failed");
 
@@ -809,20 +695,28 @@ extern "C" void launch_kernel(TKSceneData *data, ShadingType stype, int width,
 
    int antiAliasWidth = width * sqrSampleCount;
    int antiAliasHeight = height * sqrSampleCount;
+   HANDLE_ERROR(cudaMalloc(&dRayQueue, sizeof(Ray) * antiAliasWidth * antiAliasHeight));
+   HANDLE_ERROR(cudaMalloc(&dRandStates, sizeof(curandState) * antiAliasWidth * antiAliasHeight));
+
+
    dim3 dimBlock(kBlockWidth, kBlockWidth);
-   dim3 dimGrid((antiAliasWidth - 1) / kBlockWidth + 1, (antiAliasHeight- 1) / kBlockWidth + 1);
-   rayTrace<<<dimGrid, dimBlock>>>(width * sqrSampleCount, height * sqrSampleCount, camera, 
-         dBvhTree, dLightList, lightCount, dAntiAliasBuffer, dShader);
+   dim3 dimGrid((antiAliasWidth - 1) / kBlockWidth + 1, 
+         (antiAliasHeight- 1) / kBlockWidth + 1);
+   initCurand<<<dimGrid, dimBlock>>>(dRandStates, width * sqrSampleCount, height * sqrSampleCount);
+
+   generateCameraRays<<<dimGrid, dimBlock>>>(width * sqrSampleCount, height * sqrSampleCount, camera, dRayQueue, dRandStates);
+
+   rayTrace<<<dimGrid, dimBlock>>>(width * sqrSampleCount, height * sqrSampleCount, dRayQueue, 
+         dBvhTree, dLightList, lightCount, dAntiAliasBuffer, dShader, dRandStates);
    cudaDeviceSynchronize();
    checkCUDAError("RayTrace kernel failed");
 
    dimGrid = dim3((width - 1) / kBlockWidth + 1, (height - 1) / kBlockWidth + 1);
-   averageBuffer<<<dimGrid, dimBlock>>>(width, height, sqrSampleCount, dOutput, dAntiAliasBuffer);
+   averageBufferColors<<<dimGrid, dimBlock>>>(width, height, sqrSampleCount, 
+         dOutput, dAntiAliasBuffer);
    cudaDeviceSynchronize();
-   checkCUDAError("averageBuffer kernel failed");
+   checkCUDAError("averageBufferColors kernel failed");
 
-   // Clean up - No long freeing memory since it leads to 10 seconds of overhead
-   //freeGPUScene(dGeomList, geometryCount, dLightList, lightCount, dShader);
    HANDLE_ERROR(cudaMemcpy(output, dOutput, 
             sizeof(uchar4) * width * height, cudaMemcpyDeviceToHost));
 }

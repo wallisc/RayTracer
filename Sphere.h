@@ -31,7 +31,14 @@ public:
       return generateBoundingBox(c - glm::vec3(r), c + glm::vec3(r), trans);      
    }
 
-private:
+   __device__ virtual glm::vec2 UVAt(const Ray &r, float param) const {
+      printf("Sphere do not currently support textures\n");
+      return glm::vec2(0.0f);
+   }
+
+protected:
+
+
    __device__ virtual float intersects(const Ray &ray) const {
 
       glm::vec3 eMinusC = ray.o - c;

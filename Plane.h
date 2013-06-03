@@ -21,7 +21,6 @@ public:
       return worldSpaceN;
    }
 
-   
    __device__ virtual glm::vec3 getCenter() const { 
       return d * worldSpaceN;
    }
@@ -30,7 +29,13 @@ public:
       return BoundingBox(glm::vec3(-FLT_MAX / 5), glm::vec3(FLT_MAX / 5));
    }
 
-private:
+   __device__ virtual glm::vec2 UVAt(const Ray &r, float param) const {
+      printf("Planes do not currently support textures\n");
+      return glm::vec2(0.0f);
+   }
+
+protected:
+   
    __device__ virtual float intersects(const Ray &r) const {
       glm::vec3 c = n * d;
       float numer = glm::dot(-n,r.o - c);

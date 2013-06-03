@@ -2,7 +2,6 @@
 #define GEOMETRY_H
 
 #include <cuda.h>
-#include "Geometry.h"
 #include "BoundingBox.h"
 #include "Ray.h"
 #include "Material.h"
@@ -17,6 +16,8 @@ public:
    __device__ float getIntersection(const Ray &r) {
       return intersects(r.transform(invTrans));
    }
+
+   __device__ virtual glm::vec2 UVAt(const Ray &r, float param) const = 0;
 
    __device__ virtual  BoundingBox getBoundingBox() const = 0;
 

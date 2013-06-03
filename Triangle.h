@@ -9,9 +9,11 @@
 class Triangle : public Geometry {
 public:
    __device__ Triangle(const glm::vec3 &point1, const glm::vec3 &point2, 
-              const glm::vec3 &point3, const Material &mat, const glm::mat4 &trans,
-              const glm::mat4 &invTrans) : Geometry(mat, trans, invTrans),
-      p1(point1), p2(point2), p3(point3)
+         const glm::vec3 &point3, const Material &mat, const glm::mat4 &trans,
+         const glm::mat4 &invTrans, glm::vec2 nVt1 = glm::vec2(0.0f), 
+         glm::vec2 nVt2 = glm::vec2(0.0f), glm::vec2 nVt3 = glm::vec2(0.0f)) 
+      : Geometry(mat, trans, invTrans), p1(point1), p2(point2), p3(point3),
+        vt1(nVt1), vt2(nVt2), vt3(nVt3)
    {
       n = glm::normalize(glm::cross(point2 - point1, point3 - point1));
       c = point1;
@@ -39,6 +41,15 @@ public:
       return BoundingBox(min, max);
    }
 
+   __device__ virtual glm::vec2 UVAt(const Ray &r, float param) const {
+      glm::vec3 q = r.getPoint(param);
+      float area = glm::dot(glm::cross(p2 - p1, p3 - p1), n);
+      float beta = glm::dot(glm::cross(p1 - p3, q - p3), n) / area;
+      float gamma = glm::dot(glm::cross(p2 - p1, q - p1), n) / area;
+      float alpha = 1.0 - beta - gamma;
+      
+      return alpha * vt1 + beta * vt2 + gamma * vt3;
+   }
 protected:
 
    __device__ virtual float intersects(const Ray &r) const {
@@ -54,15 +65,6 @@ protected:
       glm::vec3 P = r.getPoint(t);
 
       // TODO this only needs to be calculated once per triangle
-      /*float area = glm::dot(glm::cross(p2 - p1, p3 - p1), n);
-      if (isFloatZero(area)) return -1.0f;
-
-      float beta = glm::dot(glm::cross(p1 - p3, q - p3), n) / area;
-      if (isFloatLessThan(1.0f, beta) || isFloatLessThan(beta, 0.0f)) return -1.0f;
-
-      float gamma = glm::dot(glm::cross(p2 - p1, q - p1), n) / area;
-      if (isFloatLessThan(1.0f, gamma + beta) || isFloatLessThan(gamma, 0.0f)) return -1.0f;*/
-
       glm::vec3 A = p1, B = p2, C = p3;
       glm::vec3 AB = B - A;
       glm::vec3 AC = C - A;
@@ -105,6 +107,7 @@ protected:
    // TODO c is just p1, kept for syntax readability
    glm::vec3 n, c;
    glm::vec3 p1, p2, p3;
+   glm::vec2 vt1, vt2, vt3;
 };
 
 #endif //TRIANGLE_H

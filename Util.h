@@ -48,4 +48,3 @@ __host__ __device__ inline void SWAP(T &a, T &b) {
 
 
 #endif //UTIL_H
-

@@ -32,6 +32,8 @@ int POVRayParser::parseFile(const string &fileName, TKSceneData *data) {
          continue;
       } else if (!firstWord.compare("light_source")) {
          status = parseLightSource(in, data);
+      } else if (!firstWord.compare("area_light")) {
+         status = parseAreaLight(in, data);
       } else if (!firstWord.compare("camera")) {
          status = parseCamera(in, data);
       } else if (!firstWord.compare("box")) {
@@ -77,6 +79,43 @@ int POVRayParser::parseLightSource(std::ifstream &in, TKSceneData *data) {
    data->pointLights.push_back(TKPointLight(vec3(pX, pY, pZ), vec3(cR, cG, cB)));
 #ifdef DEBUG
    printf("Light source is at %f, %f, %f with color %f, %f, %f\n", pX, pY, pZ, cR, cG, cB);
+#endif 
+   return kSuccess;
+}
+
+int POVRayParser::parseAreaLight(std::ifstream &in, TKSceneData *data) {
+   int numArgs;
+   vec3 v1, v2, v3;
+   int samples;
+   float cR, cG, cB;
+   char buffer[kBufferSize];
+
+   in.getline(buffer, kBufferSize, '}');
+   numArgs = sscanf(buffer, " { < %f , %f , %f > < %f , %f , %f > < %f , %f , %f > sample %d color rgb < %f , %f , %f > ", 
+         &v1.x, &v1.y, &v1.z, &v2.x, &v2.y, &v2.z, &v3.x, &v3.y, &v3.z, &samples, &cR, &cG, &cB);
+
+   if (numArgs != 13) {
+      cerr << "Invalid format for area_light" << endl;
+      return kBadFormat;
+   }
+
+   cR /= samples * samples;
+   cG /= samples * samples;
+   cB /= samples * samples;
+
+   vec3 edge1 = v3 - v2;
+   vec3 edge2 = v1 - v2;
+   for (int x = 0; x < samples; x++) {
+      for (int y = 0; y < samples; y++) {
+         vec3 loc = v2 + edge1 * (x / (float)samples) + edge2 * (y / (float)samples); 
+         data->pointLights.push_back(TKPointLight(loc, vec3(cR, cG, cB)));
+      }
+   }
+
+
+#ifdef DEBUG
+   printf("Area light is at (%f, %f, %f), (%f, %f, %f), and (%f, %f, %f) with color %f, %f, %f\n", 
+         v1.x, v1.y, v1.z, v2.x, v2.y, v2.z, v3.x, v3.y, v3.z, cR, cG, cB);
 #endif 
    return kSuccess;
 }
@@ -154,7 +193,7 @@ int POVRayParser::parseBox(std::ifstream &in, TKSceneData *data) {
          b.p1.x, b.p1.y, b.p1.z, b.p2.x, b.p2.y, b.p2.z);
 #endif 
 
-   status = parseModifiers(in, &b.mod);
+   status = parseModifiers(in, &b.mod, data);
    data->boxes.push_back(b);
    return status;
 }
@@ -181,7 +220,7 @@ int POVRayParser::parseSphere(std::ifstream &in, TKSceneData *data) {
          s.p.x, s.p.y, s.p.z, s.r);
 #endif 
 
-   status = parseModifiers(in, &s.mod);
+   status = parseModifiers(in, &s.mod, data);
 
    data->spheres.push_back(s);
    return status;
@@ -224,7 +263,7 @@ int POVRayParser::parseCone(std::ifstream &in, TKSceneData *data) {
          c.r1, c.r2);
 #endif 
 
-   status = parseModifiers(in, &c.mod);
+   status = parseModifiers(in, &c.mod, data);
    return status;
 }
 
@@ -252,7 +291,7 @@ int POVRayParser::parsePlane(std::ifstream &in, TKSceneData *data) {
          p.n.x, p.n.y, p.n.z, p.d);
 #endif 
 
-   status = parseModifiers(in, &p.mod);
+   status = parseModifiers(in, &p.mod, data);
 
    data->planes.push_back(p);
 
@@ -302,7 +341,33 @@ int POVRayParser::parseSmoothTriangle(std::ifstream &in, TKSceneData *data) {
          t.n1.x, t.n1.y, t.n1.z, t.n2.x, t.n2.y, t.n2.z, t.n3.x, t.n3.y, t.n3.z);
 #endif 
 
-   status = parseModifiers(in, &t.mod);
+   if (isUV(in)) {
+      status = parseWord(in, "uv"); 
+      if (status != kSuccess) return status;
+
+      status = parseCharacter(in, '{');   
+      if (status != kSuccess) return status;
+
+      status = parseUV(in, &t.vt1);
+      if (status != kSuccess) return status;
+
+      status = parseCharacter(in, ',');
+      if (status != kSuccess) return status;
+
+      status = parseUV(in, &t.vt2);
+      if (status != kSuccess) return status;
+
+      status = parseCharacter(in, ',');
+      if (status != kSuccess) return status;
+
+      status = parseUV(in, &t.vt3);
+      if (status != kSuccess) return status;
+
+      status = parseCharacter(in, '}');   
+      if (status != kSuccess) return status;
+   }
+
+   status = parseModifiers(in, &t.mod, data);
    data->smoothTriangles.push_back(t);
    return status;
 }
@@ -333,13 +398,38 @@ int POVRayParser::parseTriangle(std::ifstream &in, TKSceneData *data) {
    printf("Point 1: %f, %f, %f; Point 2: %f, %f, %f; Point 3: %f, %f, %f\n", 
          t.p1.x, t.p1.y, t.p1.z, t.p2.x, t.p2.y, t.p2.z, t.p3.x, t.p3.y, t.p3.z);
 #endif 
+   if (isUV(in)) {
+      status = parseWord(in, "uv"); 
+      if (status != kSuccess) return status;
 
-   status = parseModifiers(in, &t.mod);
+      status = parseCharacter(in, '{');   
+      if (status != kSuccess) return status;
+
+      status = parseUV(in, &t.vt1);
+      if (status != kSuccess) return status;
+
+      status = parseCharacter(in, ',');
+      if (status != kSuccess) return status;
+
+      status = parseUV(in, &t.vt2);
+      if (status != kSuccess) return status;
+
+      status = parseCharacter(in, ',');
+      if (status != kSuccess) return status;
+
+      status = parseUV(in, &t.vt3);
+      if (status != kSuccess) return status;
+
+      status = parseCharacter(in, '}');   
+      if (status != kSuccess) return status;
+   }
+
+   status = parseModifiers(in, &t.mod, data);
    data->triangles.push_back(t);
    return status;
 }
 
-int POVRayParser::parseModifiers(std::ifstream &in, TKModifier *m) {
+int POVRayParser::parseModifiers(std::ifstream &in, TKModifier *m, TKSceneData *data) {
    string nextWord;
    in >> nextWord;
    int status;
@@ -355,7 +445,7 @@ int POVRayParser::parseModifiers(std::ifstream &in, TKModifier *m) {
          } else if (!nextWord.compare("finish")) {
             status = parseFinish(in, &m->fin);
          } else if (!nextWord.compare("pigment")) {
-            status = parsePigment(in, &m->pig);
+            status = parsePigment(in, &m->pig, data);
          } else {
             cerr << "Invalid format for modifiers\n";
             return kBadFormat;
@@ -372,8 +462,9 @@ int POVRayParser::parseModifiers(std::ifstream &in, TKModifier *m) {
    return kSuccess;
 }
 
-int POVRayParser::parsePigment(std::ifstream &in, TKPigment *pigment) {
+int POVRayParser::parsePigment(std::ifstream &in, TKPigment *pigment, TKSceneData *data) {
    char buffer[kBufferSize];
+   char fileName[kBufferSize];
    vec3 color; 
    float f;   
    int numArgs;
@@ -396,6 +487,19 @@ int POVRayParser::parsePigment(std::ifstream &in, TKPigment *pigment) {
 
    if (numArgs == 4) {
       *pigment = TKPigment(color, f);
+      return kSuccess;
+   } 
+
+   numArgs = sscanf(buffer, " { image_map \"%s\" ", fileName);
+   
+   if (numArgs == 1) {
+      int texId;
+      if (!data->textureMap.count(fileName)) {
+         data->textureMap[fileName] = texId = data->textureMap.size();
+      } else {
+         texId = data->textureMap[fileName];
+      }
+      *pigment = TKPigment(texId);
       return kSuccess;
    } else {
       cerr << "Bad format found for pigment" << endl;
@@ -523,6 +627,21 @@ int POVRayParser::parseTranslate(std::ifstream &in, glm::mat4 *matStack) {
    return kSuccess;
 }
 
+int POVRayParser::parseUV(std::ifstream &in, glm::vec2 *v) {
+   char buffer[kBufferSize];
+   int numArgs;
+
+   in.getline(buffer, kBufferSize, '>');
+   numArgs = sscanf(buffer, " < %f , %f > ", &v->x, &v->y);
+   if (numArgs == 2)
+      return kSuccess;
+   else {
+      cerr << "Bad format for uv entry" << endl;
+      cerr << buffer << endl;
+      return kBadFormat;
+   }
+}
+
 int POVRayParser::parseVector(std::ifstream &in, glm::vec3 *v) {
    char buffer[kBufferSize];
    int numArgs;
@@ -590,6 +709,29 @@ bool POVRayParser::isComment(std::ifstream &in) {
    }
    
    return isComment;
+}
+
+//TODO May not be safe if an error is caused with ifstream
+bool POVRayParser::isUV(std::ifstream &in) {
+   char c1, c2;
+   string nextWord;
+   bool isUV= false;
+    
+   if (in.eof()) return false;
+
+   in >> nextWord;
+
+   if (nextWord.length() >= 2) {
+      isUV = nextWord[0] == 'u' && nextWord[1] == 'v';
+   }
+
+   // Put everything but the first character back into the istream
+   for (int i = nextWord.length(); i > 0; i--) {
+      in.unget();
+      if (isspace(in.peek())) i++;
+   }
+   
+   return isUV;
 }
 
 void POVRayParser::checkComments(std::ifstream &in) {

@@ -2,7 +2,11 @@
 #define TOKEN_DATA_H
 
 #include <vector>
+#include <map>
+#include <string>
 #include "glm/glm.hpp"
+
+const int NO_TEXUTRE = -1;
 
 typedef struct TKCamera {
    glm::vec3 pos, up, right, lookAt;
@@ -15,9 +19,13 @@ typedef struct TKCamera {
 typedef struct TKPigment {
    glm::vec3 clr;
    float f;
+   int texId;
 
    TKPigment(glm::vec3 color = glm::vec3(0.0f), float filter = 0.0f) :
-      clr(color), f(filter) {}
+      clr(color), f(filter), texId(NO_TEXUTRE) {}
+
+   TKPigment(int nTexId) :
+      clr(glm::vec3(0.0f)), f(0.0f), texId(nTexId) {}
 
 } TKPigment;
 
@@ -74,17 +82,20 @@ typedef struct TKCone{
 
 typedef struct TKTriangle {
    glm::vec3 p1, p2, p3;
+   glm::vec2 vt1, vt2, vt3;
    TKModifier mod;
 } TKTriangle;
 
 typedef struct TKSmoothTriangle {
    glm::vec3 p1, p2, p3;
    glm::vec3 n1, n2, n3;
+   glm::vec2 vt1, vt2, vt3;
    TKModifier mod;
 } TKSmoothTriangle;
 
 typedef struct TKSceneData {
    TKCamera *camera;
+   std::map<std::string, int>textureMap;
 
    std::vector<TKPointLight> pointLights;
 
@@ -93,6 +104,7 @@ typedef struct TKSceneData {
    std::vector<TKSmoothTriangle> smoothTriangles;
    std::vector<TKSphere> spheres;
    std::vector<TKPlane> planes;
+
 
    TKSceneData() : camera(NULL) {}
 } TKSceneData;

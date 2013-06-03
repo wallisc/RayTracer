@@ -6,21 +6,21 @@ camera {
 }
 
 
-light_source {<0, 9, -10> color rgb <1.5, 1.5, 1.5>}
+area_light {<0, 4, -10> <0, 9, -10> <0, 4, -8> sample 5 color rgb <1.5, 1.5, 1.5>}
 
 box { <-1, -1, -1>, <1, 2, 1>
-   pigment { color rgbf <1.0, 0.0, 1.0, 0.9>}
-   finish {ambient 0.2 diffuse 0.6 specular 0.5 refraction 1.0 ior 1.33 roughness 0.01}
+   pigment { color rgb <1.0, 0.0, 1.0>}
+   finish {ambient 0.2 diffuse 0.6 specular 0.5 roughness 0.01}
 }
 
 box { <-4, -1, -1>, <-2, 1, 1>
-   pigment { color rgbf <1.0, 1.0, 0.0, 0.9>}
-   finish {ambient 0.2 diffuse 0.6 specular 0.5 refraction 1.0 ior 1.33 roughness 0.01}
+   pigment { color rgb <1.0, 1.0, 0.0>}
+   finish {ambient 0.2 diffuse 0.6 specular 0.5 roughness 0.01}
 }
 
 box { <2, -1, -1>, <4, 3, 1>
-   pigment { color rgbf <0.0, 1.0, 1.0, 0.9>}
-   finish {ambient 0.2 diffuse 0.6 specular 0.5 refraction 1.0 ior 1.33 roughness 0.01}
+   pigment { color rgb <0.0, 1.0, 1.0>}
+   finish {ambient 0.2 diffuse 0.6 specular 0.5 roughness 0.01}
 }
 
 sphere { <0, 4, 0>, 2

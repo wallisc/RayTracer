@@ -59077,3 +59077,5 @@ sphere {<0, 0, 0>, 1
   finish { ambient 0.125 diffuse 0.5 reflection 0.5}
 }
 
+// END of shark
+

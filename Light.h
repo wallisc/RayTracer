@@ -9,7 +9,7 @@
 
 class Light {
 public:
-   __device__ virtual glm::vec3 getLightAtPoint(Geometry *geom, glm::vec3 point) const = 0;
+   __device__ virtual glm::vec3 getLightAtPoint(glm::vec3 point) const = 0;
 
    __device__ virtual glm::vec3 getLightDir(glm::vec3 point) const = 0;
    

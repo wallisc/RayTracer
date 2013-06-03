@@ -1,15 +1,17 @@
 Christopher Wallis
 CPE473 
-Project 3
+Project 4
 
 All parts of the ray tracer are working as expected. 
 
 Current implemented features are:
  * Adjustable Camera
- * Point lights, spheres, infinite planes, triangles, and smooth_triangles
+ * Anti-Alias using stratified super samples
+ * Point lights, spheres, boxes, infinite planes, triangles, and smooth_triangles
  * Phong Shading and Cook-Torrance shading
  * Reflections and refractions
  * Shadows
+ * BVH that gets created in parallel 
 
 Flags supported are:
    [width]    (optional) image width
@@ -20,13 +22,26 @@ Flags supported are:
 
    -p         (optional)Use phong shading
    -t         (optional)Use cook-torrance
-   -s         (optional)Specify a sample rate
+   -s         (optional)Specify a sample rate (default is no anti-liasing)
 
    --help     print out readme instructions
 
-Times for bunny_small_tris.pov at 800x600 on a CSL lab machine
-real  0m0.565s
-user  0m0.470s
-sys   0m0.075s
 
-My creative scene is 'iceBot.tga'
+All times are with no anti-aliasing
+
+Time for dragon_large_tris.pov 
+real  0m1.230s
+user  0m0.981s
+sys   0m0.106s
+
+Time for balls2.pov
+real  0m1.875s
+user  0m1.749s
+sys   0m0.092s
+
+Time for bunny_tasty.pov
+real  0m8.995s
+user  0m8.857s
+sys   0m0.106s
+
+
