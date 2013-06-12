@@ -64,6 +64,15 @@ unsigned char* readBMP(char* filename, int *retWidth, int *retHeight)
 }
 
 
+const bool kLeft = 0;
+const bool kRight = 1;
+
+typedef struct StackEntry {
+   bool nextDir;
+   BVHNode *node;
+   __device__ StackEntry(BVHNode *stackNode = NULL, char nextDirection = 0) : node(stackNode), nextDir(nextDirection) {}
+} StackEntry;
+
 // Find the closest shape. The index of the intersecting object is stored in
 // retOjIdx and the t-value along the input ray is stored in retParam
 //
@@ -76,11 +85,14 @@ __device__ void getClosestIntersection(const Ray &ray, BVHTree *tree,
    float t = kMaxDist;
    Geometry *closestGeom = kNoShapeFound;
 
-   BVHNode *stack[kMaxStackSize];
+   int maxDepth = 0;
+
+   StackEntry stack[kMaxStackSize];
    int stackSize = 0;
    bool justPoppedStack = false;
 
    BVHNode *cursor = tree->root;
+   bool nextDir;
      
    do {
       if (stackSize >= kMaxStackSize) {
@@ -90,6 +102,7 @@ __device__ void getClosestIntersection(const Ray &ray, BVHTree *tree,
          
       // If at a leaf
       if (cursor->geom) {
+         maxDepth = max(maxDepth, stackSize);
          float dist = cursor->geom->getIntersection(ray);
          //If two shapes are overlapping, pick the one with the closest facing normal
          if (isFloatEqual(t, dist)) {
@@ -108,37 +121,67 @@ __device__ void getClosestIntersection(const Ray &ray, BVHTree *tree,
                }
             }
          // Otherwise, if one face is front of the current one
-         } else if (dist < t && isFloatAboveZero(dist)) {
-            t = dist;
-            closestGeom = cursor->geom;
-            if (t < toBeat) {
-               *retObj = closestGeom;
-               *retParam = t;
-               return;
+         } else {
+            if (dist < t && isFloatAboveZero(dist)) {
+               t = dist;
+               closestGeom = cursor->geom;
+               if (t < toBeat) {
+                  *retObj = closestGeom;
+                  *retParam = t;
+                  return;
+               }
             }
          }
-      } else if (!justPoppedStack 
-                 && isFloatAboveZero(cursor->left->bb.getIntersection(ray)) 
-                 && cursor->left->bb.getIntersection(ray) < t) {
-         //go left
-         stack[stackSize++] = cursor;
-         cursor = cursor->left;
-         justPoppedStack = false;
-         continue;
-      } else if (cursor->right 
-                 && isFloatAboveZero(cursor->right->bb.getIntersection(ray)) 
-                 && cursor->right->bb.getIntersection(ray) < t) {
-         //go right
-         cursor = cursor->right;
-         justPoppedStack = false;
-         continue;
+      // If not on a leaf and neither branch has been explored
+      } else if (!justPoppedStack) { 
+         float left = cursor->left->bb.getIntersection(ray);
+
+         if (!cursor->right && isFloatAboveZero(left) && left < t) {
+            cursor = cursor->left;
+            justPoppedStack = false;
+            continue;
+         }
+
+         // Go down the tree with the closest bounding box
+         float right = cursor->right->bb.getIntersection(ray);
+
+         if (isFloatAboveZero(right) && (right <= left || !isFloatAboveZero(left)) && right < t) {
+            if (isFloatAboveZero(left)) stack[stackSize++] = StackEntry(cursor, kLeft);
+            cursor = cursor->right;
+            justPoppedStack = false;
+            continue;
+         } else if (isFloatAboveZero(left) && (left <= right || !isFloatAboveZero(right)) && left < t) {
+            if (isFloatAboveZero(right)) stack[stackSize++] = StackEntry(cursor, kRight);
+            cursor = cursor->left;
+            justPoppedStack = false;
+            continue;
+         } 
+      // If coming back from a 'recursion' and one of the branches hasn't been explored
+      } else {
+         if (nextDir == kRight) {
+            float right = cursor->right->bb.getIntersection(ray);
+            if (right < t) {
+               cursor = cursor->right;
+               justPoppedStack = false;
+               continue;
+            }
+         } else {
+            float left = cursor->left->bb.getIntersection(ray);
+            if (left < t) {
+               cursor = cursor->left;
+               justPoppedStack = false;
+               continue;
+            }
+         }
       }
 
       if(stackSize == 0) {
          break;
       }
+
       // Pop the stack
-      cursor = stack[stackSize - 1]; 
+      cursor = stack[stackSize - 1].node; 
+      nextDir = stack[stackSize - 1].nextDir;
       justPoppedStack = true;
       stackSize--;
    } while(true);
@@ -330,7 +373,7 @@ __device__ vec3 shadeObject(BVHTree *tree,
    //vec3 indirectLight = getIndirect<invRecLevel - 1>(intersectPoint + normal * BIG_EPSILON, normal, tree, lights, lightCount, shader, randStates);
 
    return totalLight * (1.0f - m.refl - m.alpha)
-      + m.refl * reflectedLight+ m.alpha * refractedLight;// + indirectLight;
+      + m.refl * reflectedLight+ m.alpha * refractedLight;// + m.clr * indirectLight;
 }
 
 template <> 
@@ -497,10 +540,6 @@ __global__ void rayTrace(int resWidth, int resHeight, Ray rayQueue[],
    } else {
       output[index] = vec3(0.0f);
    }
-
-   ray.d = glm::normalize(ray.d);
-   vec3 directLight = addDirectLight(ray, lights, lightCount);
-   output[index] += directLight;
 }
 
 __global__ void averageBufferColors(int resWidth, int resHeight, 
